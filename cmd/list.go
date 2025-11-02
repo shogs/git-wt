@@ -60,6 +60,42 @@ var listCmd = &cobra.Command{
 			if isMain {
 				color.Cyan(" [main]")
 			}
+
+			// Get and display status indicators
+			if !wt.Detached && wt.Branch != "" {
+				var indicators []string
+
+				// Get worktree status (modified, untracked, staged)
+				status, err := getWorktreeStatus(wt.Path)
+				if err == nil && status != nil {
+					if status.Staged > 0 {
+						indicators = append(indicators, color.GreenString("+%d", status.Staged))
+					}
+					if status.Modified > 0 {
+						indicators = append(indicators, color.YellowString("*%d", status.Modified))
+					}
+					if status.Untracked > 0 {
+						indicators = append(indicators, color.YellowString("?%d", status.Untracked))
+					}
+				}
+
+				// Get ahead/behind count
+				aheadBehind, err := getAheadBehindCount(wt.Path, wt.Branch)
+				if err == nil && aheadBehind != nil {
+					if aheadBehind.Ahead > 0 {
+						indicators = append(indicators, color.CyanString("↑%d", aheadBehind.Ahead))
+					}
+					if aheadBehind.Behind > 0 {
+						indicators = append(indicators, color.RedString("↓%d", aheadBehind.Behind))
+					}
+				}
+
+				// Print indicators
+				if len(indicators) > 0 {
+					fmt.Printf(" %s", strings.Join(indicators, " "))
+				}
+			}
+
 			fmt.Println()
 
 			if detailed {

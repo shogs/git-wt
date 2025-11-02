@@ -211,3 +211,89 @@ func ensureWorktreeDir() (string, error) {
 
 	return worktreeDir, nil
 }
+
+// WorktreeStatus represents the status of a worktree
+type WorktreeStatus struct {
+	Modified  int
+	Untracked int
+	Staged    int
+}
+
+// getWorktreeStatus returns the status of a worktree (modified, untracked, staged files)
+func getWorktreeStatus(path string) (*WorktreeStatus, error) {
+	cmd := exec.Command("git", "-C", path, "status", "--porcelain=v1")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	status := &WorktreeStatus{}
+	lines := strings.Split(out.String(), "\n")
+
+	for _, line := range lines {
+		if len(line) < 2 {
+			continue
+		}
+
+		// Porcelain format: XY filename
+		// X = index status, Y = working tree status
+		x := line[0]
+		y := line[1]
+
+		// Staged changes (index has changes)
+		if x == 'M' || x == 'A' || x == 'D' || x == 'R' || x == 'C' {
+			status.Staged++
+		}
+
+		// Modified in working tree
+		if y == 'M' || y == 'D' {
+			status.Modified++
+		}
+
+		// Untracked files
+		if x == '?' && y == '?' {
+			status.Untracked++
+		}
+	}
+
+	return status, nil
+}
+
+// AheadBehindCount represents commits ahead/behind remote
+type AheadBehindCount struct {
+	Ahead  int
+	Behind int
+}
+
+// getAheadBehindCount returns how many commits the branch is ahead/behind its remote tracking branch
+func getAheadBehindCount(path, branch string) (*AheadBehindCount, error) {
+	// Check if remote tracking branch exists
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--verify", fmt.Sprintf("origin/%s", branch))
+	if err := cmd.Run(); err != nil {
+		// No remote tracking branch
+		return nil, nil
+	}
+
+	// Get ahead/behind count
+	cmd = exec.Command("git", "-C", path, "rev-list", "--left-right", "--count", fmt.Sprintf("%s...origin/%s", branch, branch))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := cmd.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	// Output format: "ahead\tbehind\n"
+	parts := strings.Fields(strings.TrimSpace(out.String()))
+	if len(parts) != 2 {
+		return nil, nil
+	}
+
+	var count AheadBehindCount
+	fmt.Sscanf(parts[0], "%d", &count.Ahead)
+	fmt.Sscanf(parts[1], "%d", &count.Behind)
+
+	return &count, nil
+}

@@ -172,6 +172,22 @@ func removeWorktree(path string, force bool) error {
 	return cmd.Run()
 }
 
+// deleteBranch deletes a local git branch
+func deleteBranch(branch string, force bool) error {
+	args := []string{"branch"}
+	if force {
+		args = append(args, "-D")
+	} else {
+		args = append(args, "-d")
+	}
+	args = append(args, branch)
+
+	cmd := exec.Command("git", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // getWorktreeDir returns the .worktrees directory path
 func getWorktreeDir() (string, error) {
 	gitRoot, err := getGitRoot()

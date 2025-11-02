@@ -42,14 +42,13 @@ var removeCmd = &cobra.Command{
 		}
 
 		// Check for uncommitted changes
-		if !forceRemove {
-			hasChanges, err := hasUncommittedChanges(wt.Path)
-			if err != nil {
-				return fmt.Errorf("failed to check for uncommitted changes: %w", err)
-			}
-			if hasChanges {
-				return fmt.Errorf("worktree has uncommitted changes. Commit or stash them first, or use --force")
-			}
+		hasChanges, err := hasUncommittedChanges(wt.Path)
+		if err != nil {
+			return fmt.Errorf("failed to check for uncommitted changes: %w", err)
+		}
+
+		if hasChanges && !forceRemove {
+			return fmt.Errorf("worktree has uncommitted changes. Commit or stash them first, or use --force")
 		}
 
 		// Load config for teardown actions
@@ -81,6 +80,17 @@ var removeCmd = &cobra.Command{
 		}
 
 		color.Green("✓ Worktree removed: %s", branch)
+
+		// Delete branch if worktree is clean or force is used
+		if !hasChanges || forceRemove {
+			color.Blue("Deleting branch '%s'...", branch)
+			if err := deleteBranch(branch, forceRemove); err != nil {
+				color.Yellow("⚠ Failed to delete branch: %v", err)
+			} else {
+				color.Green("✓ Branch deleted: %s", branch)
+			}
+		}
+
 		return nil
 	},
 }

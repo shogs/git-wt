@@ -98,7 +98,14 @@ var newCmd = &cobra.Command{
 
 		fmt.Println()
 		color.Green("✓ Ready to work in %s", worktreePath)
-		fmt.Println("\nTo switch to this worktree:")
+
+		// Ask if user wants to switch to the new worktree
+		fmt.Println()
+		if confirmWithDefault("Switch to new worktree?", true) {
+			return spawnWorktreeShell(worktreePath, branchName)
+		}
+
+		fmt.Println("\nTo switch to this worktree later:")
 		color.Cyan("  git-wt switch %s", branchName)
 
 		return nil

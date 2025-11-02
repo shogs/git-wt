@@ -44,3 +44,21 @@ func confirm(prompt string) bool {
 	fmt.Scanln(&response)
 	return response == "y" || response == "Y" || response == "yes" || response == "Yes"
 }
+
+// Helper to get user confirmation with configurable default
+func confirmWithDefault(prompt string, defaultYes bool) bool {
+	var response string
+	if defaultYes {
+		fmt.Printf("%s [Y/n]: ", prompt)
+	} else {
+		fmt.Printf("%s [y/N]: ", prompt)
+	}
+	fmt.Scanln(&response)
+
+	// Empty response uses default
+	if response == "" {
+		return defaultYes
+	}
+
+	return response == "y" || response == "Y" || response == "yes" || response == "Yes"
+}

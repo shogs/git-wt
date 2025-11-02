@@ -1,0 +1,66 @@
+# Example git-wt configuration file
+# Copy this to .git-wt.yaml in your repository root and customize
+
+setup:
+  # Node.js project example
+  - name: npm-install
+    description: Install npm dependencies
+    script: npm install
+
+  # Copy environment file
+  - name: copy-env
+    description: Copy environment configuration
+    script: |
+      if [ -f $GIT_ROOT/.env ]; then
+        cp $GIT_ROOT/.env $WORKTREE_PATH/.env
+        echo "Environment file copied"
+      fi
+
+  # Database setup
+  - name: db-migrate
+    description: Run database migrations
+    script: npm run db:migrate
+
+  # Python project example
+  # - name: pip-install
+  #   description: Install Python dependencies
+  #   script: pip install -r requirements.txt
+
+  # Go project example
+  # - name: go-deps
+  #   description: Download Go dependencies
+  #   script: go mod download
+
+  # Ruby project example
+  # - name: bundle-install
+  #   description: Install Ruby gems
+  #   script: bundle install
+
+  # Custom build step
+  # - name: build
+  #   description: Build the project
+  #   script: npm run build
+
+teardown:
+  # Clean up build artifacts
+  - name: clean-build
+    description: Remove build artifacts
+    script: rm -rf dist/ build/
+
+  # Clean up cache
+  - name: clean-cache
+    description: Remove cache files
+    script: |
+      rm -rf node_modules/.cache
+      rm -rf .cache
+
+  # Database cleanup (optional)
+  # - name: db-cleanup
+  #   description: Clean up test data
+  #   script: npm run db:clean
+
+# Environment variables available in scripts:
+# - GIT_ROOT: Repository root path
+# - WORKTREE_PATH: Full path to the worktree
+# - WORKTREE_NAME: Branch name
+# - BASE_BRANCH: Parent branch

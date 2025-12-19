@@ -14,11 +14,28 @@ type Config struct {
 	Teardown []Action `yaml:"teardown,omitempty"`
 }
 
+// Option represents a selectable option with optional description and script
+type Option struct {
+	Option      string `yaml:"option"`                // Required: the key to press
+	Description string `yaml:"description,omitempty"` // Optional: help text
+	Script      string `yaml:"script,omitempty"`      // Optional: script for this option
+	Default     bool   `yaml:"default,omitempty"`     // Optional: mark as default option
+}
+
+// InputConfig represents user input configuration for an action
+type InputConfig struct {
+	Type    string   `yaml:"type"`              // "boolean", "option", "text"
+	Message string   `yaml:"message"`           // Prompt message (can be multiline)
+	Options []Option `yaml:"options,omitempty"` // For "option" type only
+}
+
 // Action represents a setup or teardown action
 type Action struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Script      string `yaml:"script"`
+	Name        string       `yaml:"name"`
+	Description string       `yaml:"description"`
+	Script      string       `yaml:"script"`
+	Condition   string       `yaml:"condition,omitempty"` // Shell command, runs if exit 0
+	Input       *InputConfig `yaml:"input,omitempty"`
 }
 
 // loadConfig loads the .git-wt.yaml configuration

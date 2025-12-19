@@ -173,6 +173,110 @@ teardown:
     script: rm -rf node_modules/.cache
 ```
 
+### Conditional Actions
+
+Actions can have a `condition` that determines if they run. The condition is a shell command - if it exits with code 0, the action runs:
+
+```yaml
+setup:
+  - name: npm-install
+    description: Install npm dependencies
+    condition: "test -f package.json"  # Only run if package.json exists
+    script: npm install
+
+  - name: docker-setup
+    description: Start Docker containers
+    condition: "command -v docker"     # Only run if docker is installed
+    script: docker-compose up -d
+```
+
+### Interactive Input
+
+Actions can prompt for user input before running. Three input types are supported:
+
+```yaml
+setup:
+  # Boolean: y/n prompt (single keypress, same line)
+  # Display: "Install dependencies? [y/n]:"
+  - name: install-deps
+    description: Install dependencies
+    input:
+      type: boolean
+      message: Install dependencies?
+    script: npm install
+
+  # Option: key-based selection (single keypress, case-sensitive)
+  # With descriptions - displays multi-line list
+  # Display:
+  #   Which environment?
+  #     d) Local dev environment      (bold+green if default)
+  #     s) Pre-production testing
+  #     p) Live production
+  #   Select:
+  - name: select-env
+    description: Configure environment
+    input:
+      type: option
+      message: Which environment?
+      options:
+        - option: d
+          description: Local dev environment
+          default: true              # Displayed in bold+green
+        - option: s
+          description: Pre-production testing
+        - option: p
+          description: Live production
+    script: ./setup-env.sh  # receives selected key as argument
+
+  # Option without descriptions - displays on same line as message
+  # Display: "Which database? [p, m, s]:"
+  - name: select-db
+    description: Select database
+    input:
+      type: option
+      message: Which database?
+      options:
+        - option: p                  # Press 'p' for postgres
+          default: true
+        - option: m                  # Press 'm' for mysql
+        - option: s                  # Press 's' for sqlite
+    script: ./setup-db.sh
+
+  # Option with per-option scripts
+  - name: setup-cloud
+    description: Configure cloud provider
+    input:
+      type: option
+      message: Which cloud provider?
+      options:
+        - option: a
+          description: Amazon Web Services
+          script: ./setup-aws.sh      # Runs first for this option
+        - option: g
+          description: Google Cloud Platform
+          script: ./setup-gcp.sh      # Runs first for this option
+        - option: z
+          description: Microsoft Azure
+          script: ./setup-azure.sh    # Runs first for this option
+    script: ./finalize-cloud.sh       # Then runs with option as argument
+
+  # Text: free-form input (requires Enter)
+  - name: set-port
+    description: Configure port
+    input:
+      type: text
+      message: Enter the port number
+    script: ./configure-port.sh  # receives entered text as argument
+```
+
+For `option` and `text` inputs, the value is passed to the script both as:
+- A command argument (appended to the script)
+- An environment variable `INPUT_VALUE`
+
+For `option` inputs with per-option scripts: the option's script runs first, then the action's main script runs with the option value as argument.
+
+Option selection is case-sensitive. The default option (marked with `default: true`) is displayed in uppercase, bold, and green - press the uppercase key (Shift+key) or Enter to select it. Other options are shown in lowercase and selected by pressing the lowercase key.
+
 ### Environment Variables
 
 Actions have access to these environment variables:

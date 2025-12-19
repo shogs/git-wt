@@ -151,6 +151,87 @@ teardown:
     script: npm run db:clean
 ```
 
+### Conditional Actions
+
+Only run actions when certain conditions are met:
+
+```yaml
+setup:
+  # Only install if package.json exists
+  - name: npm-install
+    description: Install npm dependencies
+    condition: "test -f package.json"
+    script: npm install
+
+  # Only run if docker is available
+  - name: docker-up
+    description: Start containers
+    condition: "command -v docker"
+    script: docker-compose up -d
+```
+
+### Interactive Prompts
+
+Ask users for input before running scripts:
+
+```yaml
+setup:
+  # Yes/no confirmation (single keypress, same line)
+  # Display: "This may take a while. Continue? [y/n]:"
+  - name: install-heavy
+    description: Install large dependencies
+    input:
+      type: boolean
+      message: This may take a while. Continue?
+    script: npm install
+
+  # Key-based selection with descriptions (multi-line)
+  # Press uppercase for default, lowercase for others, or Enter for default
+  - name: select-env
+    description: Configure environment
+    input:
+      type: option
+      message: Which environment?
+      options:
+        - option: d
+          description: Local dev environment
+          default: true            # Bold+green in display
+        - option: s
+          description: Pre-production testing
+        - option: p
+          description: Live production
+    script: ./setup-env.sh
+
+  # Without descriptions (same line as message)
+  # Display: "Which database? [p, m, s]:"
+  - name: select-db
+    description: Select database
+    input:
+      type: option
+      message: Which database?
+      options:
+        - option: p
+          default: true
+        - option: m
+        - option: s
+    script: ./setup-db.sh
+
+  # Options with per-option scripts
+  - name: setup-cloud
+    description: Configure cloud
+    input:
+      type: option
+      message: Which provider?
+      options:
+        - option: a
+          script: ./setup-aws.sh    # Runs first
+        - option: g
+          script: ./setup-gcp.sh    # Runs first
+    script: ./finalize.sh           # Then runs with key as arg
+```
+
+**Note:** Option selection is case-sensitive. The default option (with `default: true`) is displayed in uppercase, bold, and green - press the uppercase key (Shift+key) or Enter to select it. Other options appear in lowercase and are selected by pressing the lowercase key.
+
 ## Shell Integration
 
 ### Bash/Zsh

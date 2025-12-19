@@ -15,7 +15,7 @@ var (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize git-wt configuration",
-	Long:  `Creates a .git-wt.yaml configuration file with auto-detected project setup actions.`,
+	Long:  `Creates a .git-wt.yaml configuration file with auto-detected project actions.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := ensureGitRepo(); err != nil {
 			return err
@@ -53,13 +53,13 @@ var initCmd = &cobra.Command{
 
 		color.Green("✓ Created .git-wt.yaml")
 
-		if len(config.Setup) > 0 {
-			fmt.Println("\nDetected setup actions:")
-			for _, action := range config.Setup {
+		if len(config.New) > 0 {
+			fmt.Println("\nDetected new actions:")
+			for _, action := range config.New {
 				fmt.Printf("  • %s\n", action.Description)
 			}
 		} else {
-			fmt.Println("\nNo setup actions detected. Edit .git-wt.yaml to add custom actions.")
+			fmt.Println("\nNo new actions detected. Edit .git-wt.yaml to add custom actions.")
 		}
 
 		return nil

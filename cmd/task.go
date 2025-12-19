@@ -70,14 +70,14 @@ var taskCmd = &cobra.Command{
 			color.Yellow("⚠ Failed to create session file: %v", err)
 		}
 
-		// Run setup actions
+		// Run new actions
 		config, err := loadConfig()
 		if err != nil {
 			color.Yellow("⚠ Failed to load config: %v", err)
-		} else if len(config.Setup) > 0 {
-			fmt.Println("\nRunning setup actions...")
-			if err := runActions(config.Setup, worktreePath, branchName, baseBranch); err != nil {
-				color.Yellow("⚠ Setup actions completed with errors")
+		} else if len(config.New) > 0 {
+			fmt.Println("\nRunning new actions...")
+			if err := runActions(config.New, worktreePath, branchName, baseBranch); err != nil {
+				color.Yellow("⚠ New actions completed with errors")
 			}
 		}
 

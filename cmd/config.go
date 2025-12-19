@@ -10,8 +10,8 @@ import (
 
 // Config represents the .git-wt.yaml configuration
 type Config struct {
-	Setup    []Action `yaml:"setup,omitempty"`
-	Teardown []Action `yaml:"teardown,omitempty"`
+	New    []Action `yaml:"new,omitempty"`
+	Remove []Action `yaml:"remove,omitempty"`
 }
 
 // Option represents a selectable option with optional description and script
@@ -29,7 +29,7 @@ type InputConfig struct {
 	Options []Option `yaml:"options,omitempty"` // For "option" type only
 }
 
-// Action represents a setup or teardown action
+// Action represents a new or remove action
 type Action struct {
 	Name        string       `yaml:"name"`
 	Description string       `yaml:"description"`
@@ -93,7 +93,7 @@ func detectProjectType() *Config {
 
 	// Check for Node.js project
 	if fileExists(filepath.Join(gitRoot, "package.json")) {
-		config.Setup = append(config.Setup, Action{
+		config.New = append(config.New, Action{
 			Name:        "npm-install",
 			Description: "Install npm dependencies",
 			Script:      "npm install",
@@ -102,13 +102,13 @@ func detectProjectType() *Config {
 
 	// Check for Python project
 	if fileExists(filepath.Join(gitRoot, "requirements.txt")) {
-		config.Setup = append(config.Setup, Action{
+		config.New = append(config.New, Action{
 			Name:        "pip-install",
 			Description: "Install Python dependencies",
 			Script:      "pip install -r requirements.txt",
 		})
 	} else if fileExists(filepath.Join(gitRoot, "Pipfile")) {
-		config.Setup = append(config.Setup, Action{
+		config.New = append(config.New, Action{
 			Name:        "pipenv-install",
 			Description: "Install Pipenv dependencies",
 			Script:      "pipenv install",
@@ -117,7 +117,7 @@ func detectProjectType() *Config {
 
 	// Check for Go project
 	if fileExists(filepath.Join(gitRoot, "go.mod")) {
-		config.Setup = append(config.Setup, Action{
+		config.New = append(config.New, Action{
 			Name:        "go-mod-download",
 			Description: "Download Go dependencies",
 			Script:      "go mod download",
@@ -126,7 +126,7 @@ func detectProjectType() *Config {
 
 	// Check for Ruby project
 	if fileExists(filepath.Join(gitRoot, "Gemfile")) {
-		config.Setup = append(config.Setup, Action{
+		config.New = append(config.New, Action{
 			Name:        "bundle-install",
 			Description: "Install Ruby gems",
 			Script:      "bundle install",

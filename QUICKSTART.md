@@ -24,7 +24,7 @@ cd your-project
 git-wt init
 ```
 
-This creates a `.git-wt.yaml` file with auto-detected setup actions.
+This creates a `.git-wt.yaml` file with auto-detected actions.
 
 ### 2. Create your first worktree
 
@@ -58,7 +58,7 @@ gwt feature-login
 Your worktree is isolated from the main codebase:
 - Make changes, commit as normal
 - Run tests without affecting main worktree
-- Setup actions (like `npm install`) already ran automatically
+- New actions (like `npm install`) already ran automatically
 
 ### 5. View all worktrees
 
@@ -133,10 +133,10 @@ git-wt task "Fix login bug" bugfix-login-issue
 
 ## Configuration Example
 
-Edit `.git-wt.yaml` to customize setup actions:
+Edit `.git-wt.yaml` to customize actions:
 
 ```yaml
-setup:
+new:
   - name: install-deps
     description: Install dependencies
     script: npm install
@@ -145,7 +145,7 @@ setup:
     description: Setup test database
     script: npm run db:setup
 
-teardown:
+remove:
   - name: cleanup
     description: Clean up test data
     script: npm run db:clean
@@ -156,7 +156,7 @@ teardown:
 Only run actions when certain conditions are met:
 
 ```yaml
-setup:
+new:
   # Only install if package.json exists
   - name: npm-install
     description: Install npm dependencies
@@ -175,7 +175,7 @@ setup:
 Ask users for input before running scripts:
 
 ```yaml
-setup:
+new:
   # Yes/no confirmation (single keypress, same line)
   # Display: "This may take a while. Continue? [y/n]:"
   - name: install-heavy
@@ -278,7 +278,7 @@ alias gwt-list='git-wt list'
    git-wt new bugfix/login-validation
    ```
 
-2. **Leverage setup actions**: Automate environment setup
+2. **Leverage new actions**: Automate environment setup
    - Copy `.env` files
    - Install dependencies
    - Run database migrations
@@ -330,7 +330,7 @@ git status  # Should show git info
 
 The worktrees are created in `.worktrees/` by default. This is automatically added to `.gitignore`.
 
-### Setup actions failing
+### New actions failing
 
 Check your `.git-wt.yaml` syntax and make sure scripts are executable. You can test actions by running them manually in a worktree.
 

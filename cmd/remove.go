@@ -14,7 +14,7 @@ var (
 var removeCmd = &cobra.Command{
 	Use:   "remove <branch>",
 	Short: "Remove a worktree",
-	Long:  `Safely removes a worktree after running teardown actions.`,
+	Long:  `Safely removes a worktree after running remove actions.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := ensureGitRepo(); err != nil {
@@ -51,20 +51,20 @@ var removeCmd = &cobra.Command{
 			return fmt.Errorf("worktree has uncommitted changes. Commit or stash them first, or use --force")
 		}
 
-		// Load config for teardown actions
+		// Load config for remove actions
 		config, err := loadConfig()
 		if err != nil {
 			color.Yellow("⚠ Failed to load config: %v", err)
-		} else if len(config.Teardown) > 0 {
-			fmt.Println("Running teardown actions...")
+		} else if len(config.Remove) > 0 {
+			fmt.Println("Running remove actions...")
 			// Load session for environment variables
 			session, _ := loadSession(wt.Path)
 			baseBranch := ""
 			if session != nil {
 				baseBranch = session.BaseBranch
 			}
-			if err := runActions(config.Teardown, wt.Path, branch, baseBranch); err != nil {
-				color.Yellow("⚠ Teardown actions completed with errors")
+			if err := runActions(config.Remove, wt.Path, branch, baseBranch); err != nil {
+				color.Yellow("⚠ Remove actions completed with errors")
 			}
 		}
 

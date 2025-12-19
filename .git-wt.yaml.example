@@ -1,7 +1,7 @@
 # Example git-wt configuration file
 # Copy this to .git-wt.yaml in your repository root and customize
 
-setup:
+new:
   # Node.js project example
   - name: npm-install
     description: Install npm dependencies
@@ -41,7 +41,7 @@ setup:
   #   description: Build the project
   #   script: npm run build
 
-teardown:
+remove:
   # Clean up build artifacts
   - name: clean-build
     description: Remove build artifacts

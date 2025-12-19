@@ -7,7 +7,7 @@ A comprehensive Git worktree management CLI tool written in Go. Streamline your 
 - **Easy Worktree Management**: Create, switch, list, and remove worktrees with simple commands
 - **Auto-Configuration**: Automatically detects project type (Node.js, Python, Go, Ruby) and sets up dependencies
 - **Session Tracking**: Remembers task descriptions and creation time for each worktree
-- **Setup/Teardown Actions**: Run custom scripts when creating or removing worktrees
+- **New/Remove Actions**: Run custom scripts when creating or removing worktrees
 - **Interactive Cleanup**: Safely remove merged branches with interactive prompts
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 - **No External Dependencies**: Unlike the bash version, no need for `yq` or other tools
@@ -52,13 +52,13 @@ make install
 
 ### Initialize Configuration
 
-Create a `.git-wt.yaml` configuration file with auto-detected setup actions:
+Create a `.git-wt.yaml` configuration file with auto-detected actions:
 
 ```bash
 git-wt init
 ```
 
-This will detect your project type and create appropriate setup actions. You can also use:
+This will detect your project type and create appropriate actions. You can also use:
 
 ```bash
 git-wt init --minimal    # Create empty config
@@ -74,7 +74,7 @@ git-wt new feature-branch develop  # Create from specific base branch
 
 This will:
 1. Create a new branch and worktree in `.worktrees/feature-branch`
-2. Run setup actions from `.git-wt.yaml`
+2. Run new actions from `.git-wt.yaml`
 3. Add `.worktrees/` to `.gitignore` automatically
 
 ### Switch to a Worktree
@@ -155,10 +155,10 @@ git-wt root    # or: git-wt main
 
 ## Configuration
 
-The `.git-wt.yaml` file defines setup and teardown actions:
+The `.git-wt.yaml` file defines new and remove actions:
 
 ```yaml
-setup:
+new:
   - name: npm-install
     description: Install npm dependencies
     script: npm install
@@ -167,7 +167,7 @@ setup:
     description: Copy environment file
     script: cp $GIT_ROOT/.env $WORKTREE_PATH/.env
 
-teardown:
+remove:
   - name: cleanup-cache
     description: Clean up cache files
     script: rm -rf node_modules/.cache
@@ -178,7 +178,7 @@ teardown:
 Actions can have a `condition` that determines if they run. The condition is a shell command - if it exits with code 0, the action runs:
 
 ```yaml
-setup:
+new:
   - name: npm-install
     description: Install npm dependencies
     condition: "test -f package.json"  # Only run if package.json exists
@@ -195,7 +195,7 @@ setup:
 Actions can prompt for user input before running. Three input types are supported:
 
 ```yaml
-setup:
+new:
   # Boolean: y/n prompt (single keypress, same line)
   # Display: "Install dependencies? [y/n]:"
   - name: install-deps
@@ -379,7 +379,7 @@ This Go port offers several advantages over the [original bash script](https://g
 
 All features from the bash version are included:
 - All commands (init, new, switch, resume, remove, list, status, clean, task, root)
-- YAML configuration with setup/teardown actions
+- YAML configuration with new/remove actions
 - Session tracking
 - Shell spawning
 - Interactive cleanup

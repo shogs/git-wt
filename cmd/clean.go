@@ -90,15 +90,15 @@ var cleanCmd = &cobra.Command{
 				continue
 			}
 
-			// Run teardown actions
+			// Run remove actions
 			config, err := loadConfig()
-			if err == nil && len(config.Teardown) > 0 {
+			if err == nil && len(config.Remove) > 0 {
 				session, _ := loadSession(wt.Path)
 				baseBranch := ""
 				if session != nil {
 					baseBranch = session.BaseBranch
 				}
-				runActions(config.Teardown, wt.Path, branch, baseBranch)
+				runActions(config.Remove, wt.Path, branch, baseBranch)
 			}
 
 			// Remove session

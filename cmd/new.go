@@ -13,7 +13,7 @@ var newCmd = &cobra.Command{
 	Use:     "new [branch-name] [base-branch]",
 	Aliases: []string{"add"},
 	Short:   "Create a new worktree",
-	Long:    `Creates a new git worktree with optional setup actions from .git-wt.yaml.`,
+	Long:    `Creates a new git worktree with optional new actions from .git-wt.yaml.`,
 	Args:    cobra.RangeArgs(0, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := ensureGitRepo(); err != nil {
@@ -85,14 +85,14 @@ var newCmd = &cobra.Command{
 			color.Yellow("⚠ Failed to create session file: %v", err)
 		}
 
-		// Run setup actions
+		// Run new actions
 		config, err := loadConfig()
 		if err != nil {
 			color.Yellow("⚠ Failed to load config: %v", err)
-		} else if len(config.Setup) > 0 {
-			fmt.Println("\nRunning setup actions...")
-			if err := runActions(config.Setup, worktreePath, branchName, baseBranch); err != nil {
-				color.Yellow("⚠ Setup actions completed with errors")
+		} else if len(config.New) > 0 {
+			fmt.Println("\nRunning new actions...")
+			if err := runActions(config.New, worktreePath, branchName, baseBranch); err != nil {
+				color.Yellow("⚠ New actions completed with errors")
 			}
 		}
 

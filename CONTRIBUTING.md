@@ -114,7 +114,7 @@ Update README with installation instructions
   - `cmd/git.go` - Git operations
   - `cmd/config.go` - Configuration handling
   - `cmd/session.go` - Session management
-  - `cmd/actions.go` - Setup/teardown actions
+  - `cmd/actions.go` - New/remove actions
 
 ## Adding New Commands
 

@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	spawnShell bool
+	printPath bool
 )
 
 var switchCmd = &cobra.Command{
@@ -34,14 +34,14 @@ var switchCmd = &cobra.Command{
 			return fmt.Errorf("no worktree found for branch '%s'", branch)
 		}
 
-		if spawnShell {
-			// Spawn a new shell in the worktree
-			return spawnWorktreeShell(wt.Path, branch)
+		if printPath {
+			// Just print the path for shell integration
+			fmt.Println(wt.Path)
+			return nil
 		}
 
-		// Just print the path for shell integration
-		fmt.Println(wt.Path)
-		return nil
+		// Spawn a new shell in the worktree (default)
+		return spawnWorktreeShell(wt.Path, branch)
 	},
 }
 
@@ -84,13 +84,14 @@ var resumeCmd = &cobra.Command{
 			fmt.Println()
 		}
 
-		if spawnShell {
-			return spawnWorktreeShell(wt.Path, branch)
+		if printPath {
+			// Just print the path for shell integration
+			fmt.Println(wt.Path)
+			return nil
 		}
 
-		// Just print the path for shell integration
-		fmt.Println(wt.Path)
-		return nil
+		// Spawn a new shell in the worktree (default)
+		return spawnWorktreeShell(wt.Path, branch)
 	},
 }
 
@@ -125,6 +126,6 @@ func init() {
 	rootCmd.AddCommand(switchCmd)
 	rootCmd.AddCommand(resumeCmd)
 
-	switchCmd.Flags().BoolVarP(&spawnShell, "shell", "s", false, "Spawn a new shell in the worktree")
-	resumeCmd.Flags().BoolVarP(&spawnShell, "shell", "s", false, "Spawn a new shell in the worktree")
+	switchCmd.Flags().BoolVarP(&printPath, "path", "p", false, "Print worktree path instead of spawning shell")
+	resumeCmd.Flags().BoolVarP(&printPath, "path", "p", false, "Print worktree path instead of spawning shell")
 }

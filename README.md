@@ -80,15 +80,15 @@ This will:
 ### Switch to a Worktree
 
 ```bash
-git-wt switch feature-branch       # Print path (for shell integration)
-git-wt switch -s feature-branch    # Spawn new shell in worktree
+git-wt switch feature-branch       # Spawn new shell in worktree (default)
+git-wt switch -p feature-branch    # Print path (for shell integration)
 ```
 
 For seamless shell integration, add this to your `.bashrc` or `.zshrc`:
 
 ```bash
 gwt() {
-    local path=$(git-wt switch "$1")
+    local path=$(git-wt switch -p "$1")
     if [ $? -eq 0 ]; then
         cd "$path"
     fi
@@ -102,8 +102,8 @@ Now you can use `gwt feature-branch` to switch directories.
 Display session information when switching:
 
 ```bash
-git-wt resume feature-branch
-git-wt resume -s feature-branch    # With new shell
+git-wt resume feature-branch       # Spawn new shell with session info (default)
+git-wt resume -p feature-branch    # Print path (for shell integration)
 ```
 
 ### List Worktrees
@@ -305,7 +305,7 @@ Add to your `.bashrc` or `.zshrc`:
 ```bash
 # Quick switch function
 gwt() {
-    local path=$(git-wt switch "$1")
+    local path=$(git-wt switch -p "$1")
     if [ $? -eq 0 ]; then
         cd "$path"
     fi
@@ -321,7 +321,7 @@ Add to your `~/.config/fish/config.fish`:
 
 ```fish
 function gwt
-    set path (git-wt switch $argv[1])
+    set path (git-wt switch -p $argv[1])
     if test $status -eq 0
         cd $path
     end

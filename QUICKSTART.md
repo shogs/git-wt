@@ -40,7 +40,7 @@ Add this helper to your shell config (`.bashrc`, `.zshrc`):
 
 ```bash
 gwt() {
-    local path=$(git-wt switch "$1")
+    local path=$(git-wt switch -p "$1")
     if [ $? -eq 0 ]; then
         cd "$path"
     fi
@@ -241,7 +241,7 @@ Add to `.bashrc` or `.zshrc`:
 ```bash
 # Quick switch to worktree
 gwt() {
-    local path=$(git-wt switch "$1")
+    local path=$(git-wt switch -p "$1")
     if [ $? -eq 0 ]; then
         cd "$path"
     fi
@@ -260,7 +260,7 @@ Add to `~/.config/fish/config.fish`:
 
 ```fish
 function gwt
-    set path (git-wt switch $argv[1])
+    set path (git-wt switch -p $argv[1])
     if test $status -eq 0
         cd $path
     end

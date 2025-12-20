@@ -238,3 +238,135 @@ func promptTextWithDefault(message, defaultValue string) (string, error) {
 	}
 	return input, nil
 }
+
+// MultiSelectItem represents an item in a multi-select list
+type MultiSelectItem struct {
+	Label    string
+	Value    string
+	Selected bool
+}
+
+// promptMultiSelect displays a navigable multi-select list
+// Navigation: arrow keys or hjkl, space to toggle, enter to confirm, q to cancel
+// Returns selected items and whether user confirmed (false if cancelled)
+func promptMultiSelect(title string, items []MultiSelectItem) ([]MultiSelectItem, bool, error) {
+	if len(items) == 0 {
+		return nil, false, fmt.Errorf("no items provided")
+	}
+
+	cursor := 0
+	totalLines := len(items) + 2 // title + items + help line
+
+	// Print initial display
+	printMultiSelect(title, items, cursor)
+
+	for {
+		// Get terminal into raw mode for reading input
+		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to set raw mode: %w", err)
+		}
+
+		// Read input
+		b := make([]byte, 3) // Up to 3 bytes for arrow keys
+		n, err := os.Stdin.Read(b)
+
+		// Restore terminal before processing
+		term.Restore(int(os.Stdin.Fd()), oldState)
+
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to read input: %w", err)
+		}
+
+		needsRedraw := false
+
+		// Handle input
+		if n == 1 {
+			switch b[0] {
+			case 'q', 27, 3: // q, ESC, or Ctrl+C
+				fmt.Println()
+				return nil, false, nil
+			case '\r', '\n': // Enter
+				fmt.Println()
+				var selected []MultiSelectItem
+				for _, item := range items {
+					if item.Selected {
+						selected = append(selected, item)
+					}
+				}
+				return selected, true, nil
+			case ' ': // Space - toggle selection
+				items[cursor].Selected = !items[cursor].Selected
+				needsRedraw = true
+			case 'k': // Vim up
+				if cursor > 0 {
+					cursor--
+					needsRedraw = true
+				}
+			case 'j': // Vim down
+				if cursor < len(items)-1 {
+					cursor++
+					needsRedraw = true
+				}
+			}
+		} else if n == 3 && b[0] == 27 && b[1] == 91 {
+			// Arrow keys: ESC [ A/B/C/D
+			switch b[2] {
+			case 65: // Up arrow
+				if cursor > 0 {
+					cursor--
+					needsRedraw = true
+				}
+			case 66: // Down arrow
+				if cursor < len(items)-1 {
+					cursor++
+					needsRedraw = true
+				}
+			}
+		}
+
+		if needsRedraw {
+			redrawMultiSelect(title, items, cursor, totalLines)
+		}
+	}
+}
+
+// printMultiSelect prints the initial multi-select display
+func printMultiSelect(title string, items []MultiSelectItem, cursor int) {
+	fmt.Println(title)
+	for i, item := range items {
+		prefix := "  "
+		if i == cursor {
+			prefix = color.CyanString("> ")
+		}
+		checkbox := "[ ]"
+		if item.Selected {
+			checkbox = color.GreenString("[x]")
+		}
+		fmt.Printf("%s%s %s\n", prefix, checkbox, item.Label)
+	}
+	fmt.Print(color.New(color.Faint).Sprint("↑/k up  ↓/j down  space select  enter confirm  q cancel"))
+}
+
+// redrawMultiSelect redraws the multi-select display (called with terminal in normal mode)
+func redrawMultiSelect(title string, items []MultiSelectItem, cursor int, totalLines int) {
+	// Move cursor up to the title line and clear to end of screen
+	// We're on the help line (no newline after it), so go up totalLines-1
+	fmt.Printf("\033[%dF", totalLines-1) // Move to beginning of line N lines up
+	fmt.Print("\033[J")                  // Clear from cursor to end of screen
+
+	// Redraw everything
+	fmt.Println(title)
+	for i, item := range items {
+		prefix := "  "
+		if i == cursor {
+			prefix = color.CyanString("> ")
+		}
+		checkbox := "[ ]"
+		if item.Selected {
+			checkbox = color.GreenString("[x]")
+		}
+		fmt.Printf("%s%s %s\n", prefix, checkbox, item.Label)
+	}
+	fmt.Print(color.New(color.Faint).Sprint("↑/k up  ↓/j down  space select  enter confirm  q cancel"))
+}

@@ -370,3 +370,110 @@ func redrawMultiSelect(title string, items []MultiSelectItem, cursor int, totalL
 	}
 	fmt.Print(color.New(color.Faint).Sprint("↑/k up  ↓/j down  space select  enter confirm  q cancel"))
 }
+
+// promptSingleSelect displays a navigable single-select list
+// Navigation: arrow keys or hjkl, enter to select, q to cancel
+// Returns selected item, whether user confirmed (false if cancelled), error
+func promptSingleSelect(title string, items []string) (string, bool, error) {
+	if len(items) == 0 {
+		return "", false, fmt.Errorf("no items provided")
+	}
+
+	cursor := 0
+	totalLines := len(items) + 2 // title + items + help line
+
+	// Print initial display
+	printSingleSelect(title, items, cursor)
+
+	for {
+		// Get terminal into raw mode for reading input
+		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			return "", false, fmt.Errorf("failed to set raw mode: %w", err)
+		}
+
+		// Read input
+		b := make([]byte, 3) // Up to 3 bytes for arrow keys
+		n, err := os.Stdin.Read(b)
+
+		// Restore terminal before processing
+		term.Restore(int(os.Stdin.Fd()), oldState)
+
+		if err != nil {
+			return "", false, fmt.Errorf("failed to read input: %w", err)
+		}
+
+		needsRedraw := false
+
+		// Handle input
+		if n == 1 {
+			switch b[0] {
+			case 'q', 27, 3: // q, ESC, or Ctrl+C
+				fmt.Println()
+				return "", false, nil
+			case '\r', '\n': // Enter - select current item
+				fmt.Println()
+				return items[cursor], true, nil
+			case 'k': // Vim up
+				if cursor > 0 {
+					cursor--
+					needsRedraw = true
+				}
+			case 'j': // Vim down
+				if cursor < len(items)-1 {
+					cursor++
+					needsRedraw = true
+				}
+			}
+		} else if n == 3 && b[0] == 27 && b[1] == 91 {
+			// Arrow keys: ESC [ A/B/C/D
+			switch b[2] {
+			case 65: // Up arrow
+				if cursor > 0 {
+					cursor--
+					needsRedraw = true
+				}
+			case 66: // Down arrow
+				if cursor < len(items)-1 {
+					cursor++
+					needsRedraw = true
+				}
+			}
+		}
+
+		if needsRedraw {
+			redrawSingleSelect(title, items, cursor, totalLines)
+		}
+	}
+}
+
+// printSingleSelect prints the initial single-select display
+func printSingleSelect(title string, items []string, cursor int) {
+	fmt.Println(title)
+	for i, item := range items {
+		prefix := "  "
+		if i == cursor {
+			prefix = color.CyanString("> ")
+		}
+		fmt.Printf("%s%s\n", prefix, item)
+	}
+	fmt.Print(color.New(color.Faint).Sprint("↑/k up  ↓/j down  enter select  q cancel"))
+}
+
+// redrawSingleSelect redraws the single-select display (called with terminal in normal mode)
+func redrawSingleSelect(title string, items []string, cursor int, totalLines int) {
+	// Move cursor up to the title line and clear to end of screen
+	fmt.Printf("\033[%dF", totalLines-1)
+	fmt.Print("\033[J")
+
+	// Redraw everything
+	fmt.Println(title)
+	for i, item := range items {
+		prefix := "  "
+		if i == cursor {
+			prefix = color.CyanString("> ")
+		}
+		fmt.Printf("%s%s\n", prefix, item)
+	}
+	fmt.Print(color.New(color.Faint).Sprint("↑/k up  ↓/j down  enter select  q cancel"))
+}

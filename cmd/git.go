@@ -277,6 +277,42 @@ func getWorktreeStatus(path string) (*WorktreeStatus, error) {
 	return status, nil
 }
 
+// getGitStatus returns the git status output for display
+func getGitStatus(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "status", "--short")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// stashChanges stashes all changes in the worktree (including untracked files)
+func stashChanges(path string) error {
+	cmd := exec.Command("git", "-C", path, "stash", "push", "--include-untracked", "-m", "git-wt: stashed before remove")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// stashAll stages everything and stashes it (for use after reset)
+func stashAll(path string) error {
+	// First stage everything including untracked files
+	cmd := exec.Command("git", "-C", path, "add", "-A")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stage changes: %w", err)
+	}
+
+	// Now stash the staged changes
+	cmd = exec.Command("git", "-C", path, "stash", "push", "-m", "git-wt: stashed all before remove")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // AheadBehindCount represents commits ahead/behind remote
 type AheadBehindCount struct {
 	Ahead  int
@@ -312,4 +348,83 @@ func getAheadBehindCount(path, branch string) (*AheadBehindCount, error) {
 	fmt.Sscanf(parts[1], "%d", &count.Behind)
 
 	return &count, nil
+}
+
+// mixedResetToBase resets the branch to the base, putting all changes in working directory (unstaged)
+func mixedResetToBase(path, branch, baseBranch string) error {
+	// Determine what to reset to: remote branch or base branch
+	target := ""
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--verify", fmt.Sprintf("origin/%s", branch))
+	if cmd.Run() == nil {
+		target = fmt.Sprintf("origin/%s", branch)
+	} else if baseBranch != "" {
+		target = baseBranch
+	} else {
+		// Try to get default branch
+		defaultBranch, err := getDefaultBranch()
+		if err != nil {
+			return fmt.Errorf("cannot determine base to reset to: %w", err)
+		}
+		target = defaultBranch
+	}
+
+	// Use --mixed (default) to put all changes in working directory
+	cmd = exec.Command("git", "-C", path, "reset", "--mixed", target)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// pushToRemote pushes the branch to its remote tracking branch
+func pushToRemote(path, branch string) error {
+	cmd := exec.Command("git", "-C", path, "push", "origin", branch)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// pushToNewRemote pushes and sets upstream for a new remote branch
+func pushToNewRemote(path, localBranch, remoteBranch string) error {
+	cmd := exec.Command("git", "-C", path, "push", "-u", "origin", fmt.Sprintf("%s:%s", localBranch, remoteBranch))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// getUnpushedCommitCount returns the number of commits not on remote
+// For branches with a remote tracking branch: counts commits ahead
+// For new branches without remote: counts commits since base branch
+func getUnpushedCommitCount(path, branch, baseBranch string) (int, error) {
+	// First try: check if remote tracking branch exists
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--verify", fmt.Sprintf("origin/%s", branch))
+	if cmd.Run() == nil {
+		// Has remote - count commits ahead
+		cmd = exec.Command("git", "-C", path, "rev-list", "--count", fmt.Sprintf("origin/%s..%s", branch, branch))
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			return 0, err
+		}
+		var count int
+		fmt.Sscanf(strings.TrimSpace(out.String()), "%d", &count)
+		return count, nil
+	}
+
+	// No remote - count commits since base branch
+	if baseBranch == "" {
+		baseBranch, _ = getDefaultBranch()
+	}
+	if baseBranch == "" {
+		return 0, nil // Can't determine, assume 0
+	}
+
+	cmd = exec.Command("git", "-C", path, "rev-list", "--count", fmt.Sprintf("%s..%s", baseBranch, branch))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return 0, err
+	}
+	var count int
+	fmt.Sscanf(strings.TrimSpace(out.String()), "%d", &count)
+	return count, nil
 }

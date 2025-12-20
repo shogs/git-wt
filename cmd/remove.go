@@ -41,14 +41,129 @@ var removeCmd = &cobra.Command{
 			return fmt.Errorf("cannot remove worktree while inside it. Please navigate out first")
 		}
 
+		// Load session early to get baseBranch for unpushed commit check
+		session, _ := loadSession(wt.Path)
+		baseBranch := ""
+		if session != nil {
+			baseBranch = session.BaseBranch
+		}
+
 		// Check for uncommitted changes
 		hasChanges, err := hasUncommittedChanges(wt.Path)
 		if err != nil {
 			return fmt.Errorf("failed to check for uncommitted changes: %w", err)
 		}
 
-		if hasChanges && !forceRemove {
-			return fmt.Errorf("worktree has uncommitted changes. Commit or stash them first, or use --force")
+		// Check for unpushed commits (works for both pushed and unpushed branches)
+		unpushedCount, _ := getUnpushedCommitCount(wt.Path, branch, baseBranch)
+
+		changesStashed := false
+		if (hasChanges || unpushedCount > 0) && !forceRemove {
+			// Show the changes if any
+			if hasChanges {
+				status, err := getGitStatus(wt.Path)
+				if err != nil {
+					color.Yellow("⚠ Failed to get status: %v", err)
+				} else {
+					color.Yellow("Uncommitted changes in worktree:")
+					fmt.Println(status)
+				}
+			}
+
+			// Show unpushed commits if any
+			if unpushedCount > 0 {
+				color.Yellow("Branch has %d unpushed commit(s).", unpushedCount)
+				fmt.Println()
+			}
+
+			// Build prompt message
+			var promptMsg string
+			if hasChanges && unpushedCount > 0 {
+				promptMsg = "Worktree has uncommitted changes and unpushed commits."
+			} else if hasChanges {
+				promptMsg = "Worktree has uncommitted changes."
+			} else {
+				promptMsg = "Worktree has unpushed commits."
+			}
+
+			// Build options based on what issues exist
+			var options []Option
+			if hasChanges && unpushedCount > 0 {
+				// Both issues: offer combined options
+				options = []Option{
+					{Option: "f", Description: "Force remove (discard all)"},
+					{Option: "b", Description: "Stash and push before removing"},
+					{Option: "a", Description: "Stash all (reset branch, stash everything)"},
+					{Option: "n", Description: "Cancel", Default: true},
+				}
+			} else if hasChanges {
+				options = []Option{
+					{Option: "f", Description: "Force remove (discard changes)"},
+					{Option: "s", Description: "Stash changes before removing"},
+					{Option: "n", Description: "Cancel", Default: true},
+				}
+			} else {
+				// Only unpushed commits
+				options = []Option{
+					{Option: "f", Description: "Force remove"},
+					{Option: "p", Description: "Push to remote first"},
+					{Option: "a", Description: "Stash all (reset branch, stash commits)"},
+					{Option: "n", Description: "Cancel", Default: true},
+				}
+			}
+
+			choice, _, err := promptOption(promptMsg, options)
+			if err != nil {
+				return fmt.Errorf("failed to get user input: %w", err)
+			}
+
+			switch choice {
+			case "n":
+				fmt.Println("Cancelled.")
+				return nil
+			case "s":
+				// Stash only (no unpushed commits)
+				color.Blue("Stashing changes...")
+				if err := stashChanges(wt.Path); err != nil {
+					return fmt.Errorf("failed to stash changes: %w", err)
+				}
+				color.Green("✓ Changes stashed")
+				changesStashed = true
+			case "p":
+				// Push only (no uncommitted changes)
+				if err := doPush(wt.Path, branch); err != nil {
+					return err
+				}
+			case "b":
+				// Stash and push (both uncommitted changes and unpushed commits)
+				color.Blue("Stashing changes...")
+				if err := stashChanges(wt.Path); err != nil {
+					return fmt.Errorf("failed to stash changes: %w", err)
+				}
+				color.Green("✓ Changes stashed")
+				changesStashed = true
+
+				if err := doPush(wt.Path, branch); err != nil {
+					return err
+				}
+			case "a":
+				// Stash all: mixed reset to base, then stage and stash everything
+				color.Blue("Resetting branch to base...")
+				if err := mixedResetToBase(wt.Path, branch, baseBranch); err != nil {
+					return fmt.Errorf("failed to reset branch: %w", err)
+				}
+				color.Green("✓ Branch reset")
+
+				color.Blue("Staging and stashing all changes...")
+				if err := stashAll(wt.Path); err != nil {
+					return fmt.Errorf("failed to stash changes: %w", err)
+				}
+				color.Green("✓ All changes stashed")
+				changesStashed = true
+				forceRemove = true // Need force delete since branch appears unmerged after reset
+			case "f":
+				forceRemove = true
+			}
 		}
 
 		// Load config for remove actions
@@ -57,12 +172,6 @@ var removeCmd = &cobra.Command{
 			color.Yellow("⚠ Failed to load config: %v", err)
 		} else if len(config.Remove) > 0 {
 			fmt.Println("Running remove actions...")
-			// Load session for environment variables
-			session, _ := loadSession(wt.Path)
-			baseBranch := ""
-			if session != nil {
-				baseBranch = session.BaseBranch
-			}
 			if err := runActions(config.Remove, wt.Path, branch, baseBranch); err != nil {
 				color.Yellow("⚠ Remove actions completed with errors")
 			}
@@ -81,8 +190,8 @@ var removeCmd = &cobra.Command{
 
 		color.Green("✓ Worktree removed: %s", branch)
 
-		// Delete branch if worktree is clean or force is used
-		if !hasChanges || forceRemove {
+		// Delete branch if worktree is clean, force is used, or changes were stashed
+		if !hasChanges || forceRemove || changesStashed {
 			color.Blue("Deleting branch '%s'...", branch)
 			if err := deleteBranch(branch, forceRemove); err != nil {
 				color.Yellow("⚠ Failed to delete branch: %v", err)
@@ -93,6 +202,29 @@ var removeCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// doPush handles pushing to remote, prompting for branch name if needed
+func doPush(path, branch string) error {
+	if remoteBranchExists(branch) {
+		color.Blue("Pushing to origin/%s...", branch)
+		if err := pushToRemote(path, branch); err != nil {
+			return fmt.Errorf("failed to push: %w", err)
+		}
+		color.Green("✓ Pushed to remote")
+	} else {
+		// Prompt for remote branch name with current branch as default
+		remoteBranch, err := promptTextWithDefault("Remote branch name", branch)
+		if err != nil {
+			return fmt.Errorf("failed to get branch name: %w", err)
+		}
+		color.Blue("Pushing to origin/%s...", remoteBranch)
+		if err := pushToNewRemote(path, branch, remoteBranch); err != nil {
+			return fmt.Errorf("failed to push: %w", err)
+		}
+		color.Green("✓ Pushed to new remote branch: %s", remoteBranch)
+	}
+	return nil
 }
 
 func init() {

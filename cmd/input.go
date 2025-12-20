@@ -219,3 +219,22 @@ func promptText(message string) (string, error) {
 
 	return strings.TrimSpace(input), nil
 }
+
+// promptTextWithDefault displays a message with a grayed default, reads text input
+// If user just presses Enter, returns the default value
+func promptTextWithDefault(message, defaultValue string) (string, error) {
+	grayDefault := color.New(color.Faint).Sprint(defaultValue)
+	fmt.Printf("%s %s ", message, color.CyanString("[%s]:", grayDefault))
+
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read input: %w", err)
+	}
+
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultValue, nil
+	}
+	return input, nil
+}

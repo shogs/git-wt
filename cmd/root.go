@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var rootCmd = &cobra.Command{
@@ -37,28 +40,58 @@ func ensureGitRepo() error {
 	return nil
 }
 
-// Helper to get user confirmation
+// Helper to get user confirmation (single keystroke, default No)
 func confirm(prompt string) bool {
-	var response string
-	fmt.Printf("%s [y/N]: ", prompt)
-	fmt.Scanln(&response)
-	return response == "y" || response == "Y" || response == "yes" || response == "Yes"
+	return confirmWithDefault(prompt, false)
 }
 
-// Helper to get user confirmation with configurable default
+// Helper to get user confirmation with configurable default (single keystroke)
 func confirmWithDefault(prompt string, defaultYes bool) bool {
-	var response string
 	if defaultYes {
 		fmt.Printf("%s [Y/n]: ", prompt)
 	} else {
 		fmt.Printf("%s [y/N]: ", prompt)
 	}
-	fmt.Scanln(&response)
 
-	// Empty response uses default
-	if response == "" {
-		return defaultYes
+	// Get terminal into raw mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		// Fallback to line-based input
+		var response string
+		fmt.Scanln(&response)
+		if response == "" {
+			return defaultYes
+		}
+		return strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
 	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	return response == "y" || response == "Y" || response == "yes" || response == "Yes"
+	// Read single byte
+	b := make([]byte, 1)
+	for {
+		_, err := os.Stdin.Read(b)
+		if err != nil {
+			return defaultYes
+		}
+
+		switch b[0] {
+		case 'y', 'Y':
+			fmt.Println("y")
+			return true
+		case 'n', 'N':
+			fmt.Println("n")
+			return false
+		case '\r', '\n': // Enter - use default
+			if defaultYes {
+				fmt.Println("y")
+			} else {
+				fmt.Println("n")
+			}
+			return defaultYes
+		case 3: // Ctrl+C
+			fmt.Println()
+			return false
+		}
+		// Ignore other keys
+	}
 }

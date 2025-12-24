@@ -5,7 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2024-10-28
+## [0.2.0] - 2025-12-25
+
+### Added
+- **Interactive worktree selection**: `switch` and `remove` commands now show interactive selection when no branch is specified
+  - Navigate with arrow keys or vim-style `j`/`k`
+  - `remove` supports multi-select with space to toggle
+  - `switch` uses single-select with enter to confirm
+- **Smart removal prompts**: When removing worktrees with uncommitted changes or unpushed commits, users are prompted with contextual options:
+  - `f` - Force remove (discard changes)
+  - `s` - Stash changes before removing (when uncommitted changes exist)
+  - `p` - Push to remote first (when unpushed commits exist)
+  - `b` - Stash and push (when both issues exist)
+  - `a` - Stash all (reset branch to base and stash everything including commits)
+- **Push to new remote branch**: When pushing unpushed commits, prompts for remote branch name with current branch as default
+- **Single keystroke confirmations**: Y/n prompts now respond immediately without requiring Enter
+- **Ctrl+C support**: All interactive prompts now properly handle Ctrl+C to cancel
+
+### Changed
+- **Config renamed**: `setup`/`teardown` actions renamed to `new`/`remove` to match command names
+- **Switch default behavior**: `switch` now spawns a shell by default; use `-p` flag to print path for shell integration
+- **Stash includes untracked**: Stash operations now include untracked files with `--include-untracked`
+- Improved terminal UI handling for better compatibility across different terminal emulators
+
+### Fixed
+- Branch deletion after stashing changes now works correctly
+- Unpushed commit detection works for branches without remote tracking
+- Interactive UI redraws properly in neovim terminal and other terminal emulators
+
+## [0.1.0] - 2025-10-28
 
 ### Added
 - Initial release of git-wt Go CLI

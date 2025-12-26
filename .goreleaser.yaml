@@ -60,8 +60,10 @@ brews:
       owner: shogs
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
     homepage: https://github.com/shogs/git-wt
     description: Git worktree management tool
+    license: MIT
     install: |
       bin.install "git-wt"
     test: |

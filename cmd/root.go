@@ -22,9 +22,12 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// SetVersion sets the version for the CLI (called from main with ldflags value)
+func SetVersion(v string) {
+	rootCmd.Version = v
+}
+
 func init() {
-	// Add version flag
-	rootCmd.Version = "1.0.0"
 	rootCmd.SetVersionTemplate("git-wt version {{.Version}}\n")
 }
 

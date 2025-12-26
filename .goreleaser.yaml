@@ -59,6 +59,7 @@ brews:
     repository:
       owner: shogs
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/shogs/git-wt
     description: Git worktree management tool
     install: |

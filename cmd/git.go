@@ -628,3 +628,82 @@ func unstageFile(repoPath, filePath string) error {
 	}
 	return nil
 }
+
+// extractHunkPatch extracts a single hunk from a unified diff as a valid patch
+// hunkIndex is 0-based
+func extractHunkPatch(rawDiff string, hunkIndex int) (string, error) {
+	lines := strings.Split(rawDiff, "\n")
+	var header []string
+	var hunks [][]string
+	var currentHunk []string
+	inHunk := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "diff --git") ||
+			strings.HasPrefix(line, "index ") ||
+			strings.HasPrefix(line, "--- ") ||
+			strings.HasPrefix(line, "+++ ") ||
+			strings.HasPrefix(line, "old mode") ||
+			strings.HasPrefix(line, "new mode") ||
+			strings.HasPrefix(line, "new file mode") ||
+			strings.HasPrefix(line, "deleted file mode") ||
+			strings.HasPrefix(line, "similarity index") ||
+			strings.HasPrefix(line, "rename from") ||
+			strings.HasPrefix(line, "rename to") {
+			header = append(header, line)
+		} else if strings.HasPrefix(line, "@@") {
+			if inHunk && len(currentHunk) > 0 {
+				hunks = append(hunks, currentHunk)
+			}
+			currentHunk = []string{line}
+			inHunk = true
+		} else if inHunk {
+			currentHunk = append(currentHunk, line)
+		}
+	}
+	// Don't forget the last hunk
+	if inHunk && len(currentHunk) > 0 {
+		hunks = append(hunks, currentHunk)
+	}
+
+	if hunkIndex < 0 || hunkIndex >= len(hunks) {
+		return "", fmt.Errorf("hunk index %d out of range (have %d hunks)", hunkIndex, len(hunks))
+	}
+
+	// Build patch with header + single hunk
+	var patch strings.Builder
+	for _, h := range header {
+		patch.WriteString(h)
+		patch.WriteString("\n")
+	}
+	for _, h := range hunks[hunkIndex] {
+		patch.WriteString(h)
+		patch.WriteString("\n")
+	}
+
+	return patch.String(), nil
+}
+
+// stageHunk stages a single hunk using git apply --cached
+func stageHunk(repoPath, patch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "apply", "--cached", "--unidiff-zero")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git apply --cached failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// unstageHunk unstages a single hunk using git apply --cached -R
+func unstageHunk(repoPath, patch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "apply", "--cached", "-R", "--unidiff-zero")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git apply --cached -R failed: %s", stderr.String())
+	}
+	return nil
+}

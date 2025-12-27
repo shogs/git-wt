@@ -50,6 +50,11 @@ type DiffView struct {
 	ShowFullFile  bool       // Toggle: false = changes only (default), true = full file
 	FullFileLines []DiffLine // Full file side-by-side view
 	FullFileHunks []DiffHunk // Hunk positions in full file view
+	// For hunk staging/unstaging
+	Mode         DiffMode
+	WorktreePath string
+	BaseBranch   string
+	RawDiff      string // Original unified diff text for hunk extraction
 }
 
 // FileListView holds the state for the file list
@@ -863,7 +868,7 @@ func renderDiffView(dv *DiffView) {
 
 	// Footer (last row)
 	position := fmt.Sprintf(" %d/%d ", dv.ScrollOffset+1, max(1, len(lines)))
-	help := "↑↓ scroll  j/k hunk  A/a view  esc back"
+	help := "↑↓ scroll  j/k hunk  space stage/unstage  A/a view  esc back"
 	fmt.Print(color.New(color.Faint).Sprint(help))
 	padding = dv.TermWidth - len(help) - len(position)
 	if padding > 0 {
@@ -1091,6 +1096,26 @@ func handleDiffViewInput(dv *DiffView, key Key) ViewAction {
 			dv.CurrentHunk = 0
 			return ViewActionRedraw
 		}
+
+	case KeySpace:
+		// Stage/unstage current hunk
+		if dv.RawDiff != "" && len(hunks) > 0 {
+			patch, err := extractHunkPatch(dv.RawDiff, dv.CurrentHunk)
+			if err == nil {
+				switch dv.Mode {
+				case DiffModeUnstaged:
+					// Stage this hunk
+					if stageHunk(dv.WorktreePath, patch) == nil {
+						return ViewActionRefresh
+					}
+				case DiffModeStaged:
+					// Unstage this hunk
+					if unstageHunk(dv.WorktreePath, patch) == nil {
+						return ViewActionRefresh
+					}
+				}
+			}
+		}
 	}
 	return ViewActionNone
 }
@@ -1173,11 +1198,21 @@ func identifyHunks(lines []DiffLine) []DiffHunk {
 
 // loadFileDiff loads the diff for a file and creates a DiffView
 func loadFileDiff(worktreePath, baseBranch string, file *ChangedFile, staged, unstaged bool) (*DiffView, error) {
+	mode := DiffModeBase
+	if staged {
+		mode = DiffModeStaged
+	} else if unstaged {
+		mode = DiffModeUnstaged
+	}
+
 	dv := &DiffView{
 		File:         file,
 		ScrollOffset: 0,
 		CurrentHunk:  0,
 		ShowFullFile: false,
+		Mode:         mode,
+		WorktreePath: worktreePath,
+		BaseBranch:   baseBranch,
 	}
 
 	switch file.Status {
@@ -1238,6 +1273,7 @@ func loadFileDiff(worktreePath, baseBranch string, file *ChangedFile, staged, un
 			}}
 			dv.FullFileLines = dv.Lines
 		} else {
+			dv.RawDiff = diffText // Store for hunk staging/unstaging
 			dv.Lines = parseUnifiedDiff(diffText)
 			// Build full file view for modified files
 			dv.FullFileLines, dv.FullFileHunks, _ = buildFullFileDiff(worktreePath, baseBranch, file, staged, unstaged)
@@ -1380,11 +1416,12 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 	b := make([]byte, 64)
 
 	// Helper function to run diff view with persistent raw mode
-	runDiffViewLoop := func() (exitCompletely bool) {
+	// Returns: (exitCompletely, needsRefresh)
+	runDiffViewLoop := func() (exitCompletely bool, needsRefresh bool) {
 		// Enter raw mode for the entire diff view session
 		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 		if err != nil {
-			return true
+			return true, false
 		}
 		defer term.Restore(int(os.Stdin.Fd()), oldState)
 
@@ -1394,7 +1431,7 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 		for {
 			n, err := os.Stdin.Read(b)
 			if err != nil {
-				return true
+				return true, false
 			}
 
 			key := parseKeypress(b, n)
@@ -1405,13 +1442,26 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 				disableMouseTracking()
 				clearScreen()
 				showCursor()
-				return false // Go back to file list
+				return false, false // Go back to file list
 			case ViewActionQuit:
 				disableMouseTracking()
 				clearScreen()
 				showCursor()
-				return true // Exit completely
+				return true, false // Exit completely
 			case ViewActionRedraw:
+				renderDiffView(currentDiff)
+			case ViewActionRefresh:
+				// Reload the diff after staging/unstaging a hunk
+				file := currentDiff.File
+				newDiff, err := loadFileDiff(worktreePath, baseBranch, file, staged, unstaged)
+				if err != nil || len(newDiff.Lines) == 0 || newDiff.RawDiff == "" {
+					// No more changes in this file, go back to file list
+					disableMouseTracking()
+					clearScreen()
+					showCursor()
+					return false, true // Go back and refresh file list
+				}
+				currentDiff = newDiff
 				renderDiffView(currentDiff)
 			}
 		}
@@ -1462,7 +1512,7 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 			inDiffView = true
 
 			// Run the diff view loop (stays in raw mode the entire time)
-			exitCompletely := runDiffViewLoop()
+			exitCompletely, needsRefresh := runDiffViewLoop()
 			inDiffView = false
 			currentDiff = nil
 
@@ -1470,6 +1520,25 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 				fmt.Println()
 				return true, nil // Quit completely
 			}
+
+			// If hunk was staged/unstaged, refresh the file list
+			if needsRefresh {
+				newFiles, err := getChangedFiles(worktreePath, baseBranch, staged, unstaged)
+				if err == nil {
+					fileList.Files = newFiles
+					if fileList.Cursor >= len(newFiles) {
+						fileList.Cursor = len(newFiles) - 1
+					}
+					if fileList.Cursor < 0 {
+						fileList.Cursor = 0
+					}
+					totalLines = len(newFiles) + 2
+					if len(newFiles) == 0 {
+						return false, nil // No more files, go back to mode selection
+					}
+				}
+			}
+
 			// Re-print the file list inline
 			printFileList(fileList)
 		case ViewActionRedraw:

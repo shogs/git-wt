@@ -117,9 +117,30 @@ git-wt new review-pr-123
 # Make changes, test
 gwt review-pr-123
 
+# Review changes with interactive diff viewer
+git-wt diff -b main
+
 # When done
 git-wt remove review-pr-123
 ```
+
+### Reviewing your changes
+
+```bash
+# Interactive diff viewer (compared to base branch)
+git-wt diff
+
+# Compare against specific branch
+git-wt diff -b develop
+
+# Show staged changes only
+git-wt diff --staged
+
+# Show unstaged changes only
+git-wt diff --unstaged
+```
+
+Navigate with arrow keys or `j`/`k`, press Enter to view file diff, Esc to go back.
 
 ### Task-based workflow
 
@@ -301,7 +322,8 @@ alias gwt-list='git-wt list'
 
 ## Next Steps
 
-- Read the full [README.md](README.md) for all commands
+- Read [USAGE.md](USAGE.md) for detailed command examples and workflows
+- Read the full [README.md](README.md) for all commands and configuration
 - Check out [.git-wt.yaml.example](.git-wt.yaml.example) for configuration ideas
 - Set up shell integration for seamless workflow
 - Join the discussion and contribute!

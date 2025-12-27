@@ -5,6 +5,7 @@ A comprehensive Git worktree management CLI tool written in Go. Streamline your 
 ## Features
 
 - **Easy Worktree Management**: Create, switch, list, and remove worktrees with simple commands
+- **Interactive Diff Viewer**: Side-by-side diff view with vim-style navigation
 - **Auto-Configuration**: Automatically detects project type (Node.js, Python, Go, Ruby) and sets up dependencies
 - **Session Tracking**: Remembers task descriptions and creation time for each worktree
 - **New/Remove Actions**: Run custom scripts when creating or removing worktrees
@@ -137,6 +138,28 @@ Interactively remove worktrees for branches that have been merged:
 ```bash
 git-wt clean
 ```
+
+### Interactive Diff Viewer
+
+View changed files with an interactive side-by-side diff:
+
+```bash
+git-wt diff                    # Compare against base branch
+git-wt diff -b develop         # Compare against specific branch
+git-wt diff --staged           # Show staged changes only
+git-wt diff --unstaged         # Show unstaged changes only
+git-wt diff src/file.go        # View specific file (non-interactive)
+```
+
+Navigation:
+- Arrow keys - Scroll line by line in diff view
+- `j` / `k` - Navigate file list, or jump between hunks in diff view
+- `Ctrl+d` / `Ctrl+u` - Half page scroll
+- Mouse scroll - Scroll in diff view
+- `Enter` - Open diff view for selected file
+- `Esc` - Close diff view / exit
+- `g` / `G` - Jump to top / bottom
+- `q` - Quit
 
 ### Create Task-Based Worktree
 
@@ -377,8 +400,9 @@ This Go port offers several advantages over the [original bash script](https://g
 
 ### Feature Parity
 
-All features from the bash version are included:
-- All commands (init, new, switch, resume, remove, list, status, clean, task, root)
+All features from the bash version are included, plus new additions:
+- All commands (init, new, switch, resume, remove, list, status, clean, task, root, diff)
+- Interactive diff viewer with side-by-side view (new in Go version)
 - YAML configuration with new/remove actions
 - Session tracking
 - Shell spawning
@@ -409,6 +433,12 @@ go test ./...
 # Format code
 go fmt ./...
 ```
+
+## Documentation
+
+- [QUICKSTART.md](QUICKSTART.md) - Get started in 5 minutes
+- [USAGE.md](USAGE.md) - Detailed usage examples for all commands
+- [.git-wt.yaml.example](.git-wt.yaml.example) - Example configuration file
 
 ## License
 

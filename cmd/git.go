@@ -428,3 +428,203 @@ func getUnpushedCommitCount(path, branch, baseBranch string) (int, error) {
 	fmt.Sscanf(strings.TrimSpace(out.String()), "%d", &count)
 	return count, nil
 }
+
+// ChangedFile represents a file that has been modified, added, or deleted
+type ChangedFile struct {
+	Path    string // File path relative to repo root
+	Status  string // M=Modified, A=Added, D=Deleted, R=Renamed, C=Copied
+	OldPath string // For renames/copies, the original path
+}
+
+// getChangedFiles returns files changed between baseRef and HEAD (or working tree)
+// If staged is true, shows only staged changes
+// If unstaged is true, shows only unstaged changes
+// If both are false, compares baseRef...HEAD for committed changes
+func getChangedFiles(path, baseRef string, staged, unstaged bool) ([]ChangedFile, error) {
+	var args []string
+
+	if staged {
+		// Show staged changes
+		args = []string{"-C", path, "diff", "--name-status", "--staged"}
+	} else if unstaged {
+		// Show unstaged changes (working tree vs index)
+		args = []string{"-C", path, "diff", "--name-status"}
+	} else {
+		// Show changes between base and HEAD
+		args = []string{"-C", path, "diff", "--name-status", fmt.Sprintf("%s...HEAD", baseRef)}
+	}
+
+	cmd := exec.Command("git", args...)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git diff failed: %s", stderr.String())
+	}
+
+	files := parseChangedFiles(out.String())
+
+	// For unstaged mode, also include untracked files
+	if unstaged {
+		untrackedFiles, err := getUntrackedFiles(path)
+		if err == nil {
+			files = append(files, untrackedFiles...)
+		}
+	}
+
+	return files, nil
+}
+
+// parseChangedFiles parses git diff --name-status output
+func parseChangedFiles(output string) []ChangedFile {
+	var files []ChangedFile
+	lines := strings.Split(output, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Format: STATUS\tPATH or STATUS\tOLDPATH\tNEWPATH (for renames)
+		parts := strings.Split(line, "\t")
+		if len(parts) < 2 {
+			continue
+		}
+
+		status := parts[0]
+		file := ChangedFile{
+			Status: string(status[0]), // First char is the status (R100 -> R)
+		}
+
+		if status[0] == 'R' || status[0] == 'C' {
+			// Rename or copy: has old and new path
+			if len(parts) >= 3 {
+				file.OldPath = parts[1]
+				file.Path = parts[2]
+			}
+		} else {
+			file.Path = parts[1]
+		}
+
+		files = append(files, file)
+	}
+
+	return files
+}
+
+// getUntrackedFiles returns untracked files in the repository
+func getUntrackedFiles(path string) ([]ChangedFile, error) {
+	cmd := exec.Command("git", "-C", path, "ls-files", "--others", "--exclude-standard")
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git ls-files failed: %s", stderr.String())
+	}
+
+	var files []ChangedFile
+	lines := strings.Split(out.String(), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		files = append(files, ChangedFile{
+			Path:   line,
+			Status: "?", // Untracked
+		})
+	}
+
+	return files, nil
+}
+
+// getFileDiff returns the unified diff for a specific file
+// If staged is true, shows staged diff
+// If unstaged is true, shows unstaged diff
+// Otherwise shows diff between baseRef and HEAD
+func getFileDiff(path, baseRef, filePath string, staged, unstaged bool) (string, error) {
+	var args []string
+
+	if staged {
+		args = []string{"-C", path, "diff", "--staged", "--", filePath}
+	} else if unstaged {
+		args = []string{"-C", path, "diff", "--", filePath}
+	} else {
+		args = []string{"-C", path, "diff", fmt.Sprintf("%s...HEAD", baseRef), "--", filePath}
+	}
+
+	cmd := exec.Command("git", args...)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git diff failed: %s", stderr.String())
+	}
+
+	return out.String(), nil
+}
+
+// getFileContent returns the content of a file at a specific ref
+// Use "HEAD" for current commit, or a branch/commit name
+func getFileContent(path, ref, filePath string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "show", fmt.Sprintf("%s:%s", ref, filePath))
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git show failed: %s", stderr.String())
+	}
+
+	return out.String(), nil
+}
+
+// getWorkingTreeFileContent returns the content of a file from the working tree
+func getWorkingTreeFileContent(repoPath, filePath string) (string, error) {
+	fullPath := filepath.Join(repoPath, filePath)
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+// getStagedFileContent returns the content of a file from the staging area (index)
+func getStagedFileContent(repoPath, filePath string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "show", fmt.Sprintf(":%s", filePath))
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git show failed: %s", stderr.String())
+	}
+
+	return out.String(), nil
+}
+
+// stageFile stages a file using git add
+func stageFile(repoPath, filePath string) error {
+	cmd := exec.Command("git", "-C", repoPath, "add", "--", filePath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git add failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// unstageFile unstages a file using git restore --staged
+func unstageFile(repoPath, filePath string) error {
+	cmd := exec.Command("git", "-C", repoPath, "restore", "--staged", "--", filePath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git restore --staged failed: %s", stderr.String())
+	}
+	return nil
+}

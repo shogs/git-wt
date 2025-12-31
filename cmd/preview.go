@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -506,8 +508,8 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 	// Calculate header height based on branches
 	getHeaderHeight := func() int {
 		branches := getEnabledBranches()
-		// Title (1) + preview status (1) + separator (1) + "Source branches:" (1) + branches + separator (1) + help (1)
-		return 6 + len(branches)
+		// Title (1) + preview box (3: top + content + bottom) + source box (2 + branches: top + branches + bottom) + help (1)
+		return 1 + 3 + 2 + len(branches) + 1
 	}
 
 	// Get preview branch status
@@ -549,46 +551,77 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 		clearScreen()
 		hideCursor()
 
+		// Row tracker
+		row := 1
+
 		// Draw header - title bar
-		moveCursor(1, 1)
+		moveCursor(row, 1)
 		title := fmt.Sprintf(" PREVIEW: %s ", previewBranchName)
 		fmt.Print(color.New(color.BgBlue, color.FgWhite, color.Bold).Sprint(title))
 		padding := termWidth - len(title)
 		if padding > 0 {
 			fmt.Print(color.New(color.BgBlue).Sprint(strings.Repeat(" ", padding)))
 		}
+		row++
 
-		// Draw preview branch status line
-		moveCursor(2, 1)
+		// Preview box - top border with title
+		moveCursor(row, 1)
+		previewBoxTitle := "─ Preview "
+		previewBoxTitleLen := utf8.RuneCountInString(previewBoxTitle) // visual length
+		remainingWidth := termWidth - previewBoxTitleLen - 2         // -2 for corners
+		if remainingWidth < 0 {
+			remainingWidth = 0
+		}
+		fmt.Print("┌" + previewBoxTitle + strings.Repeat("─", remainingWidth) + "┐")
+		row++
+
+		// Preview box - content
+		moveCursor(row, 1)
 		previewStatus := getPreviewStatus()
-		previewLine := fmt.Sprintf(" %s → %s", color.New(color.Bold).Sprint(previewBranchName), previewStatus)
-		fmt.Print(previewLine)
+		previewContent := fmt.Sprintf(" %s → %s", color.New(color.Bold).Sprint(previewBranchName), previewStatus)
+		// Calculate visible length (rune count without ANSI codes) for padding
+		contentPadding := termWidth - visualLen(previewContent) - 2 // -2 for box sides
+		if contentPadding < 0 {
+			contentPadding = 0
+		}
+		fmt.Print("│" + previewContent + strings.Repeat(" ", contentPadding) + "│")
+		row++
 
-		// Draw separator
-		moveCursor(3, 1)
-		fmt.Print(strings.Repeat("─", termWidth))
+		// Preview box - bottom border
+		moveCursor(row, 1)
+		fmt.Print("└" + strings.Repeat("─", termWidth-2) + "┘")
+		row++
 
-		// Section header for source branches
-		moveCursor(4, 1)
-		fmt.Print(color.New(color.Faint).Sprint(" Source branches:"))
+		// Source branches box - top border with title
+		moveCursor(row, 1)
+		sourceBoxTitle := "─ Source Branches "
+		sourceBoxTitleLen := utf8.RuneCountInString(sourceBoxTitle) // visual length
+		remainingWidth = termWidth - sourceBoxTitleLen - 2
+		if remainingWidth < 0 {
+			remainingWidth = 0
+		}
+		fmt.Print("┌" + sourceBoxTitle + strings.Repeat("─", remainingWidth) + "┐")
+		row++
 
-		// Draw branch status
-		for i, branch := range branches {
-			moveCursor(5+i, 1)
+		// Source branches box - content (branch lines)
+		for _, branch := range branches {
+			moveCursor(row, 1)
 			info := branchInfo[branch]
-			line := formatBranchLine(branch, info, stagedEnabled, unstagedEnabled, termWidth)
+			line := formatBranchLineBoxed(branch, info, stagedEnabled, unstagedEnabled, termWidth)
 			fmt.Print(line)
+			row++
 		}
 
-		// Separator after branches
-		separatorRow := 5 + len(branches)
-		moveCursor(separatorRow, 1)
-		fmt.Print(strings.Repeat("─", termWidth))
+		// Source branches box - bottom border
+		moveCursor(row, 1)
+		fmt.Print("└" + strings.Repeat("─", termWidth-2) + "┘")
+		row++
 
 		// Help line
-		moveCursor(separatorRow+1, 1)
-		helpText := " [b]ranches  [s]taged  [u]nstaged  [q]uit "
+		moveCursor(row, 1)
+		helpText := " [b]ranches  [s]taged  [u]nstaged  [q]uit"
 		fmt.Print(color.New(color.Faint).Sprint(helpText))
+		row++
 
 		// Draw log area
 		logStartRow := headerHeight + 1
@@ -1170,4 +1203,81 @@ func formatBranchLine(branch string, info *BranchInfo, stagedEnabled, unstagedEn
 	}
 
 	return fmt.Sprintf(" %s %s: %s", indicatorStr, branch, strings.Join(changeParts, " + "))
+}
+
+// stripAnsi removes ANSI escape codes from a string to get visible length
+func stripAnsi(s string) string {
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansiRegex.ReplaceAllString(s, "")
+}
+
+// visualLen returns the visual width of a string (rune count after stripping ANSI)
+func visualLen(s string) int {
+	return utf8.RuneCountInString(stripAnsi(s))
+}
+
+// formatBranchLineBoxed formats a branch line with box borders for the header display
+func formatBranchLineBoxed(branch string, info *BranchInfo, stagedEnabled, unstagedEnabled map[string]bool, termWidth int) string {
+	if info == nil {
+		content := fmt.Sprintf(" %s", branch)
+		padding := termWidth - visualLen(content) - 2 // -2 for box sides
+		if padding < 0 {
+			padding = 0
+		}
+		return "│" + content + strings.Repeat(" ", padding) + "│"
+	}
+
+	// Build change counts
+	var changeParts []string
+	changeParts = append(changeParts, fmt.Sprintf("%d commits", info.CommitsAhead))
+
+	if info.WorktreePath != "" {
+		changes, err := getWorktreeChangeCounts(info.WorktreePath)
+		if err == nil {
+			if changes.Staged > 0 {
+				if stagedEnabled[branch] {
+					changeParts = append(changeParts, color.GreenString("%d staged", changes.Staged))
+				} else {
+					changeParts = append(changeParts, color.New(color.Faint).Sprintf("%d staged", changes.Staged))
+				}
+			}
+			if changes.Unstaged > 0 {
+				if unstagedEnabled[branch] {
+					changeParts = append(changeParts, color.YellowString("%d unstaged", changes.Unstaged))
+				} else {
+					changeParts = append(changeParts, color.New(color.Faint).Sprintf("%d unstaged", changes.Unstaged))
+				}
+			}
+			if changes.Untracked > 0 {
+				if unstagedEnabled[branch] {
+					changeParts = append(changeParts, color.CyanString("%d untracked", changes.Untracked))
+				} else {
+					changeParts = append(changeParts, color.New(color.Faint).Sprintf("%d untracked", changes.Untracked))
+				}
+			}
+		}
+	}
+
+	// Build indicators
+	var indicators []string
+	if stagedEnabled[branch] {
+		indicators = append(indicators, color.GreenString("S"))
+	}
+	if unstagedEnabled[branch] {
+		indicators = append(indicators, color.YellowString("U"))
+	}
+	indicatorStr := ""
+	if len(indicators) > 0 {
+		indicatorStr = "[" + strings.Join(indicators, "") + "]"
+	}
+
+	content := fmt.Sprintf(" %s %s: %s", indicatorStr, branch, strings.Join(changeParts, " + "))
+
+	// Calculate visible length (rune count without ANSI codes) for padding
+	padding := termWidth - visualLen(content) - 2 // -2 for box sides
+	if padding < 0 {
+		padding = 0
+	}
+
+	return "│" + content + strings.Repeat(" ", padding) + "│"
 }

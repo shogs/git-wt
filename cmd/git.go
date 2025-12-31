@@ -1107,15 +1107,15 @@ func addFileContent(repoPath, filePath string, content []byte) error {
 
 // --- Preview worktree helper functions ---
 
-// createPreviewWorktree creates or resets a worktree for the preview branch
-// Returns the worktree path
-func createPreviewWorktree(gitRoot, branchName, baseBranch string) (string, error) {
+// createPreviewWorktree creates or reuses a preview worktree
+// Returns: worktreePath, wasCreated (true if newly created), error
+func createPreviewWorktree(gitRoot, branchName, baseBranch string) (string, bool, error) {
 	worktreePath := filepath.Join(gitRoot, ".worktrees", branchName)
 
 	// Check if worktree already exists
 	worktrees, err := getWorktrees()
 	if err != nil {
-		return "", fmt.Errorf("failed to list worktrees: %w", err)
+		return "", false, fmt.Errorf("failed to list worktrees: %w", err)
 	}
 
 	var existingWorktree *WorktreeInfo
@@ -1129,9 +1129,9 @@ func createPreviewWorktree(gitRoot, branchName, baseBranch string) (string, erro
 	if existingWorktree != nil {
 		// Worktree exists - fully clean it (reset + remove untracked)
 		if err := cleanWorktree(worktreePath, baseBranch); err != nil {
-			return "", fmt.Errorf("failed to clean existing worktree: %w", err)
+			return "", false, fmt.Errorf("failed to clean existing worktree: %w", err)
 		}
-		return worktreePath, nil
+		return worktreePath, false, nil
 	}
 
 	// Check if branch exists
@@ -1153,17 +1153,17 @@ func createPreviewWorktree(gitRoot, branchName, baseBranch string) (string, erro
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to create worktree: %s", stderr.String())
+		return "", false, fmt.Errorf("failed to create worktree: %s", stderr.String())
 	}
 
 	// If branch existed, fully clean it to base (reset + remove untracked)
 	if branchExists {
 		if err := cleanWorktree(worktreePath, baseBranch); err != nil {
-			return "", fmt.Errorf("failed to clean worktree to base: %w", err)
+			return "", false, fmt.Errorf("failed to clean worktree to base: %w", err)
 		}
 	}
 
-	return worktreePath, nil
+	return worktreePath, true, nil
 }
 
 // mergeBranchInWorktree merges a branch into HEAD within a worktree

@@ -254,9 +254,20 @@ func createPreviewBranch(gitRoot, baseBranch string, branches []string, stagedEn
 
 	// Create/reset preview worktree
 	fmt.Printf("[%s] Creating preview worktree from %s...\n", timestamp, baseBranch)
-	worktreePath, err := createPreviewWorktree(gitRoot, previewBranchName, baseBranch)
+	worktreePath, wasCreated, err := createPreviewWorktree(gitRoot, previewBranchName, baseBranch)
 	if err != nil {
 		return "", fmt.Errorf("failed to create preview worktree: %w", err)
+	}
+
+	// Run new actions if worktree was just created (like git-wt new does)
+	if wasCreated {
+		config, err := loadConfig()
+		if err == nil && len(config.New) > 0 {
+			fmt.Printf("[%s] Running setup actions...\n", timestamp)
+			if err := runActions(config.New, worktreePath, previewBranchName, baseBranch); err != nil {
+				color.Yellow("Warning: Some setup actions failed: %v", err)
+			}
+		}
 	}
 
 	// Merge each branch's commits

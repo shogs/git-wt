@@ -15,6 +15,7 @@ This guide provides detailed usage examples for all git-wt commands. For install
   - [clean](#clean---cleanup-merged-branches)
   - [root](#root---return-to-repository-root)
   - [task](#task---create-task-based-worktree)
+  - [preview](#preview---create-a-preview-branch)
 - [Diff Commands](#diff-commands)
   - [diff](#diff---interactive-diff-viewer)
 - [Configuration](#configuration)
@@ -24,6 +25,7 @@ This guide provides detailed usage examples for all git-wt commands. For install
   - [Code Review](#code-review-workflow)
   - [Bug Fixing](#bug-fixing-workflow)
   - [Parallel Development](#parallel-development-workflow)
+  - [Integration Testing](#integration-testing-workflow)
 
 ---
 
@@ -41,6 +43,7 @@ This guide provides detailed usage examples for all git-wt commands. For install
 | `clean` | Interactive cleanup of merged branches |
 | `root` | Return to repository root |
 | `task` | Create worktree with task description |
+| `preview` | Merge multiple branches into a preview branch |
 | `diff` | Interactive diff viewer |
 
 ---
@@ -334,6 +337,148 @@ git-wt task "Add payment processing" feature-payments develop
 
 ---
 
+### `preview` - Create a Preview Branch
+
+Creates a preview branch by merging multiple worktree branches together, then continuously watches for changes and auto-rebuilds.
+
+```bash
+# Interactive selection of branches to merge
+git-wt preview
+
+# Include uncommitted changes (WIP) from all branches
+git-wt preview --wip
+
+# Custom preview branch name
+git-wt preview --name staging
+
+# Force overwrite existing preview branch
+git-wt preview --force
+```
+
+**Requirements:**
+- Git 2.38 or later (for conflict detection via `git merge-tree --write-tree`)
+
+**What happens:**
+1. Lists all worktree branches with commit counts
+2. Lets you multi-select which branches to include
+3. Checks for merge conflicts before creating preview
+4. Creates/resets preview branch from main
+5. Merges all selected branches sequentially
+6. Enters watch mode to monitor for changes
+7. Auto-rebuilds when commits are detected
+
+**Interactive selection:**
+
+```
+Select branches to include in preview (base: main)
+
+> [ ] feature-auth (5 commits)
+  [ ] feature-api (12 commits)
+  [ ] bugfix-login (2 commits) *
+
+↑/k up  ↓/j down  space select  enter confirm  q cancel
+```
+
+The `*` indicates branches with uncommitted changes.
+
+**Watch mode output:**
+
+```
+[14:32:15] Watching for changes... (w: toggle WIP, q: quit)
+[14:32:15] WIP: feature-auth [ON], feature-api [OFF]
+[14:35:42] Commits changed in: feature-auth
+[14:35:42] Rebuilding preview branch...
+[14:35:42]   Merged feature-auth
+[14:35:42]   Merged feature-api
+[14:35:42] Applying WIP from feature-auth...
+[14:35:43] Preview branch updated
+```
+
+**Watch mode controls:**
+- `w` - Toggle WIP inclusion per-branch
+- `q` - Quit watch mode
+- `Ctrl+C` - Exit gracefully
+
+**Conflict handling:**
+
+If branches have merge conflicts, the preview is aborted:
+
+```
+Checking for merge conflicts... conflicts detected!
+
+Conflicting files:
+  - src/auth/handler.go
+  - src/api/routes.go
+
+Preview aborted. Resolve conflicts between branches before creating preview.
+```
+
+During watch mode, conflicts pause auto-rebuild:
+
+```
+Merge conflict detected!
+After changes in: feature-auth
+Conflicting files:
+  - src/auth/handler.go
+
+Options:
+  [r] Retry - check again for conflicts
+  [q] Quit watch mode
+```
+
+**WIP (Work-in-Progress) support:**
+
+Include uncommitted changes from worktrees:
+
+```bash
+# Enable WIP for all branches at start
+git-wt preview --wip
+```
+
+Or toggle during watch mode:
+
+```
+[w] pressed - Toggle WIP for which branch?
+
+  1. feature-auth [ON]
+  2. feature-api [OFF]
+  3. bugfix-login [OFF]
+  a. Toggle ALL
+
+> 2
+
+WIP enabled for feature-api
+Rebuilding preview with updated WIP settings...
+```
+
+WIP changes are applied as patches after merging commits, without modifying the original worktrees.
+
+**Flags:**
+
+| Flag | Short | Default | Description |
+|:-----|:------|:--------|:------------|
+| `--name` | `-n` | `preview` | Name for the preview branch |
+| `--force` | `-f` | `false` | Force overwrite preview branch |
+| `--wip` | `-w` | `false` | Include uncommitted changes |
+
+**Use cases:**
+
+```bash
+# Test how multiple features integrate
+git-wt preview
+
+# Live preview with work-in-progress changes
+git-wt preview --wip
+
+# Create a staging branch for QA
+git-wt preview --name staging
+
+# Refresh preview after resolving conflicts
+git-wt preview --force
+```
+
+---
+
 ## Diff Commands
 
 ### `diff` - Interactive Diff Viewer
@@ -549,6 +694,44 @@ git-wt status
 
 # Clean up merged branches periodically
 git-wt clean
+```
+
+### Integration Testing Workflow
+
+```bash
+# 1. Create worktrees for features being developed
+git-wt new feature/auth
+git-wt new feature/payments
+git-wt new feature/notifications
+
+# 2. Work on each feature in parallel
+gwt feature/auth
+# ... implement auth ...
+
+gwt feature/payments
+# ... implement payments ...
+
+# 3. Test how features integrate together
+git-wt preview
+
+# Select all branches you want to test together
+# The preview branch is created with all features merged
+
+# 4. Run tests on the preview branch
+npm test
+
+# 5. Watch mode auto-rebuilds as you make changes
+# In one terminal: git-wt preview (keeps running)
+# In other terminals: work on feature branches
+
+# 6. Include work-in-progress for real-time testing
+git-wt preview --wip
+# Now even uncommitted changes are included in preview
+
+# 7. When ready, merge features individually to main
+git checkout main
+git merge feature/auth
+git merge feature/payments
 ```
 
 ---

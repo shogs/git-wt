@@ -412,8 +412,8 @@ func buildFullFileDiff(worktreePath, baseBranch string, file *ChangedFile, stage
 	var result []DiffLine
 	var hunks []DiffHunk
 
-	baseIdx := 0  // 0-based index into baseLines
-	currIdx := 0  // 0-based index into currentLines
+	baseIdx := 0 // 0-based index into baseLines
+	currIdx := 0 // 0-based index into currentLines
 	changeIdx := 0
 
 	for baseIdx < len(baseLines) || currIdx < len(currentLines) {

@@ -288,6 +288,52 @@ func getGitStatus(path string) (string, error) {
 	return out.String(), nil
 }
 
+// WorktreeChanges holds counts of different change types
+type WorktreeChanges struct {
+	Staged    int
+	Unstaged  int
+	Untracked int
+}
+
+// getWorktreeChangeCounts returns counts of staged, unstaged, and untracked files
+func getWorktreeChangeCounts(path string) (*WorktreeChanges, error) {
+	status, err := getGitStatus(path)
+	if err != nil {
+		return nil, err
+	}
+
+	changes := &WorktreeChanges{}
+	lines := strings.Split(status, "\n")
+
+	for _, line := range lines {
+		if len(line) < 2 {
+			continue
+		}
+
+		// First char = staged status, second char = unstaged status
+		staged := line[0]
+		unstaged := line[1]
+
+		// Untracked files: "??"
+		if staged == '?' && unstaged == '?' {
+			changes.Untracked++
+			continue
+		}
+
+		// Staged changes: first char is not space or ?
+		if staged != ' ' && staged != '?' {
+			changes.Staged++
+		}
+
+		// Unstaged changes: second char is not space or ?
+		if unstaged != ' ' && unstaged != '?' {
+			changes.Unstaged++
+		}
+	}
+
+	return changes, nil
+}
+
 // stashChanges stashes all changes in the worktree (including untracked files)
 func stashChanges(path string) error {
 	cmd := exec.Command("git", "-C", path, "stash", "push", "--include-untracked", "-m", "git-wt: stashed before remove")
@@ -705,5 +751,499 @@ func unstageHunk(repoPath, patch string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("git apply --cached -R failed: %s", stderr.String())
 	}
+	return nil
+}
+
+// --- Preview command helper functions ---
+
+// getGitVersion returns the Git version as major, minor, patch components
+func getGitVersion() (major, minor, patch int, err error) {
+	cmd := exec.Command("git", "--version")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return 0, 0, 0, err
+	}
+	// Output: "git version 2.38.1" or "git version 2.38.1.windows.1"
+	output := strings.TrimSpace(out.String())
+	parts := strings.Fields(output)
+	if len(parts) < 3 {
+		return 0, 0, 0, fmt.Errorf("unexpected git version format: %s", output)
+	}
+	version := parts[2]
+	// Handle versions like "2.38.1.windows.1"
+	versionParts := strings.Split(version, ".")
+	if len(versionParts) >= 1 {
+		fmt.Sscanf(versionParts[0], "%d", &major)
+	}
+	if len(versionParts) >= 2 {
+		fmt.Sscanf(versionParts[1], "%d", &minor)
+	}
+	if len(versionParts) >= 3 {
+		fmt.Sscanf(versionParts[2], "%d", &patch)
+	}
+	return major, minor, patch, nil
+}
+
+// getCommitCountBetween returns the number of commits in branch that are not in baseBranch
+func getCommitCountBetween(baseBranch, branch string) (int, error) {
+	cmd := exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", baseBranch, branch))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return 0, err
+	}
+	var count int
+	fmt.Sscanf(strings.TrimSpace(out.String()), "%d", &count)
+	return count, nil
+}
+
+// getBranchHead returns the commit SHA for a branch
+func getBranchHead(branch string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", branch)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
+// MergeConflictResult represents the result of a merge conflict check
+type MergeConflictResult struct {
+	HasConflicts     bool
+	ConflictingFiles []string
+	TreeOID          string
+}
+
+// checkMergeConflicts uses git merge-tree --write-tree to detect conflicts without modifying the working directory
+// Requires Git 2.38+
+// Checks each branch against the base, and each pair of branches against each other
+func checkMergeConflicts(baseBranch string, branches []string) (*MergeConflictResult, error) {
+	if len(branches) == 0 {
+		return &MergeConflictResult{HasConflicts: false}, nil
+	}
+
+	result := &MergeConflictResult{}
+
+	// Check each branch against the base branch
+	for _, branch := range branches {
+		conflicts, err := checkPairMergeConflict(baseBranch, branch)
+		if err != nil {
+			// Ignore errors for identical branches
+			continue
+		}
+		if len(conflicts) > 0 {
+			result.HasConflicts = true
+			result.ConflictingFiles = append(result.ConflictingFiles, conflicts...)
+		}
+	}
+
+	// Check each pair of branches against each other
+	for i := 0; i < len(branches); i++ {
+		for j := i + 1; j < len(branches); j++ {
+			conflicts, err := checkPairMergeConflict(branches[i], branches[j])
+			if err != nil {
+				continue
+			}
+			if len(conflicts) > 0 {
+				result.HasConflicts = true
+				result.ConflictingFiles = append(result.ConflictingFiles, conflicts...)
+			}
+		}
+	}
+
+	// Deduplicate conflict files
+	if len(result.ConflictingFiles) > 0 {
+		seen := make(map[string]bool)
+		var unique []string
+		for _, f := range result.ConflictingFiles {
+			if !seen[f] {
+				seen[f] = true
+				unique = append(unique, f)
+			}
+		}
+		result.ConflictingFiles = unique
+	}
+
+	return result, nil
+}
+
+// checkPairMergeConflict checks for conflicts between two branches
+func checkPairMergeConflict(branch1, branch2 string) ([]string, error) {
+	args := []string{"merge-tree", "--write-tree", branch1, branch2}
+	cmd := exec.Command("git", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	output := stdout.String()
+
+	if err != nil {
+		// Exit code 1 means conflicts
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			conflicts := parseMergeTreeConflicts(output)
+			return conflicts, nil
+		}
+		return nil, fmt.Errorf("merge-tree failed: %s", stderr.String())
+	}
+
+	return nil, nil
+}
+
+// parseMergeTreeConflicts parses git merge-tree output to extract conflicting file paths
+func parseMergeTreeConflicts(output string) []string {
+	var conflicts []string
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		// Look for conflict markers - format varies by Git version
+		// Common patterns:
+		// "CONFLICT (content): Merge conflict in path/to/file"
+		// "CONFLICT (add/add): Merge conflict in path/to/file"
+		if strings.HasPrefix(line, "CONFLICT") {
+			if idx := strings.Index(line, " in "); idx != -1 {
+				path := strings.TrimSpace(line[idx+4:])
+				conflicts = append(conflicts, path)
+			}
+		}
+	}
+	return conflicts
+}
+
+// createOrResetBranch creates a new branch or resets an existing branch to the given starting point
+func createOrResetBranch(branchName, startPoint string) error {
+	cmd := exec.Command("git", "checkout", "-B", branchName, startPoint)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create/reset branch: %s", stderr.String())
+	}
+	return nil
+}
+
+// mergeBranch merges a branch into the current HEAD
+func mergeBranch(branch string, noFF bool) error {
+	args := []string{"merge"}
+	if noFF {
+		args = append(args, "--no-ff")
+	}
+	args = append(args, "-m", fmt.Sprintf("Merge %s into preview", branch), branch)
+
+	cmd := exec.Command("git", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("merge failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// checkoutBranch switches to an existing branch
+func checkoutBranch(branch string) error {
+	cmd := exec.Command("git", "checkout", branch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("checkout failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// --- WIP (Work-in-Progress) helper functions ---
+
+// UntrackedFile represents an untracked file with its content
+type UntrackedFile struct {
+	Path    string
+	Content []byte
+}
+
+// WIPChanges represents uncommitted changes from a worktree
+type WIPChanges struct {
+	WorktreePath string
+	Branch       string
+	Diff         string          // Combined staged+unstaged diff
+	Untracked    []UntrackedFile // Untracked files with content
+	HasChanges   bool
+}
+
+// getWorktreeDiff returns the combined diff of staged and unstaged changes in a worktree
+func getWorktreeDiff(worktreePath string) (string, error) {
+	// git diff HEAD shows all changes (staged + unstaged) compared to HEAD
+	cmd := exec.Command("git", "-C", worktreePath, "diff", "HEAD")
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git diff HEAD failed: %s", stderr.String())
+	}
+	return out.String(), nil
+}
+
+// getStagedDiff returns only staged changes
+func getStagedDiff(worktreePath string) (string, error) {
+	cmd := exec.Command("git", "-C", worktreePath, "diff", "--cached")
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git diff --cached failed: %s", stderr.String())
+	}
+	return out.String(), nil
+}
+
+// getUnstagedDiff returns only unstaged changes (excludes staged)
+func getUnstagedDiff(worktreePath string) (string, error) {
+	cmd := exec.Command("git", "-C", worktreePath, "diff")
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git diff failed: %s", stderr.String())
+	}
+	return out.String(), nil
+}
+
+// getUntrackedFilesWithContent returns untracked files with their content
+func getUntrackedFilesWithContent(worktreePath string) ([]UntrackedFile, error) {
+	// Get list of untracked files
+	cmd := exec.Command("git", "-C", worktreePath, "ls-files", "--others", "--exclude-standard")
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git ls-files failed: %s", stderr.String())
+	}
+
+	var files []UntrackedFile
+	lines := strings.Split(out.String(), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Read file content
+		fullPath := filepath.Join(worktreePath, line)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			// Skip files we can't read (might be binary or permissions issue)
+			continue
+		}
+
+		// Skip binary files (simple heuristic: check for null bytes)
+		if isBinaryContent(content) {
+			continue
+		}
+
+		files = append(files, UntrackedFile{
+			Path:    line,
+			Content: content,
+		})
+	}
+
+	return files, nil
+}
+
+// isBinaryContent checks if content appears to be binary (contains null bytes)
+func isBinaryContent(content []byte) bool {
+	// Check first 8KB for null bytes
+	checkLen := len(content)
+	if checkLen > 8192 {
+		checkLen = 8192
+	}
+	for i := 0; i < checkLen; i++ {
+		if content[i] == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// applyPatch applies a patch to the current working directory
+func applyPatch(patch string) error {
+	if patch == "" {
+		return nil
+	}
+	cmd := exec.Command("git", "apply", "--3way")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git apply failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// addFileContent writes a file and stages it
+func addFileContent(repoPath, filePath string, content []byte) error {
+	fullPath := filepath.Join(repoPath, filePath)
+
+	// Ensure directory exists
+	dir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Write file
+	if err := os.WriteFile(fullPath, content, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	// Stage file
+	cmd := exec.Command("git", "-C", repoPath, "add", "--", filePath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git add failed: %s", stderr.String())
+	}
+
+	return nil
+}
+
+// --- Preview worktree helper functions ---
+
+// createPreviewWorktree creates or resets a worktree for the preview branch
+// Returns the worktree path
+func createPreviewWorktree(gitRoot, branchName, baseBranch string) (string, error) {
+	worktreePath := filepath.Join(gitRoot, ".worktrees", branchName)
+
+	// Check if worktree already exists
+	worktrees, err := getWorktrees()
+	if err != nil {
+		return "", fmt.Errorf("failed to list worktrees: %w", err)
+	}
+
+	var existingWorktree *WorktreeInfo
+	for _, wt := range worktrees {
+		if wt.Path == worktreePath {
+			existingWorktree = &wt
+			break
+		}
+	}
+
+	if existingWorktree != nil {
+		// Worktree exists - fully clean it (reset + remove untracked)
+		if err := cleanWorktree(worktreePath, baseBranch); err != nil {
+			return "", fmt.Errorf("failed to clean existing worktree: %w", err)
+		}
+		return worktreePath, nil
+	}
+
+	// Check if branch exists
+	branchExists := false
+	cmd := exec.Command("git", "rev-parse", "--verify", branchName)
+	if cmd.Run() == nil {
+		branchExists = true
+	}
+
+	// Create worktree
+	if branchExists {
+		// Use existing branch
+		cmd = exec.Command("git", "worktree", "add", worktreePath, branchName)
+	} else {
+		// Create new branch from base
+		cmd = exec.Command("git", "worktree", "add", "-b", branchName, worktreePath, baseBranch)
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to create worktree: %s", stderr.String())
+	}
+
+	// If branch existed, fully clean it to base (reset + remove untracked)
+	if branchExists {
+		if err := cleanWorktree(worktreePath, baseBranch); err != nil {
+			return "", fmt.Errorf("failed to clean worktree to base: %w", err)
+		}
+	}
+
+	return worktreePath, nil
+}
+
+// mergeBranchInWorktree merges a branch into HEAD within a worktree
+func mergeBranchInWorktree(worktreePath, branch string, noFF bool) error {
+	args := []string{"-C", worktreePath, "merge"}
+	if noFF {
+		args = append(args, "--no-ff")
+	}
+	args = append(args, "-m", fmt.Sprintf("Merge %s into preview", branch), branch)
+
+	cmd := exec.Command("git", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("merge failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// applyPatchInWorktree applies a patch within a worktree (leaves changes unstaged)
+// Note: We don't use --3way here because it implies --index which would stage the changes
+func applyPatchInWorktree(worktreePath, patch string) error {
+	if patch == "" {
+		return nil
+	}
+	cmd := exec.Command("git", "-C", worktreePath, "apply")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git apply failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// applyPatchAndStageInWorktree applies a patch to both index and working tree (staged)
+func applyPatchAndStageInWorktree(worktreePath, patch string) error {
+	if patch == "" {
+		return nil
+	}
+	// Apply the patch with --index to apply to both index and working tree
+	// This stages only the files from this patch, not everything
+	cmd := exec.Command("git", "-C", worktreePath, "apply", "--index", "--3way")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git apply --index failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// resetWorktreeToBase resets a worktree to the base branch
+func resetWorktreeToBase(worktreePath, baseBranch string) error {
+	cmd := exec.Command("git", "-C", worktreePath, "reset", "--hard", baseBranch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to reset worktree: %s", stderr.String())
+	}
+	return nil
+}
+
+// cleanWorktree removes all untracked files and directories, and resets staged/unstaged changes
+func cleanWorktree(worktreePath, baseBranch string) error {
+	// First, reset any staged/unstaged changes
+	cmd := exec.Command("git", "-C", worktreePath, "reset", "--hard", baseBranch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to reset worktree: %s", stderr.String())
+	}
+
+	// Then clean untracked files and directories
+	cmd = exec.Command("git", "-C", worktreePath, "clean", "-fd")
+	stderr.Reset()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to clean worktree: %s", stderr.String())
+	}
+
 	return nil
 }

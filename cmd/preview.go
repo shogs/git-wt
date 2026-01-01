@@ -726,6 +726,21 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 		}
 	}
 
+	// Update just the status bar (no screen clear - avoids flicker)
+	updateStatusBar := func() {
+		termWidth, termHeight, _ := getTerminalSize()
+		branches := getEnabledBranches()
+
+		moveCursor(termHeight, 1)
+		statusText := fmt.Sprintf(" Watching %d branches | Base: %s | %s ",
+			len(branches), baseBranch, time.Now().Format("15:04:05"))
+		fmt.Print(color.New(color.BgBlue, color.FgWhite).Sprint(statusText))
+		padding := termWidth - len(statusText)
+		if padding > 0 {
+			fmt.Print(color.New(color.BgBlue).Sprint(strings.Repeat(" ", padding)))
+		}
+	}
+
 	// Draw modal menu overlay
 	drawModal := func(title string, lines []string) {
 		termWidth, termHeight, _ := getTerminalSize()
@@ -1188,8 +1203,8 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 			}
 
 			if len(changedBranches) == 0 && len(changesDetectedBranches) == 0 {
-				// Just refresh status bar time
-				drawScreen()
+				// Just refresh status bar time (no flicker)
+				updateStatusBar()
 				continue
 			}
 

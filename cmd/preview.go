@@ -457,6 +457,76 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 		}
 	}
 
+	// Refresh branch info from current worktrees
+	// Returns: new branches added, branches removed
+	refreshBranchInfo := func() (added []string, removed []string) {
+		gitRoot, _ := getGitRoot()
+		worktrees, err := getWorktrees()
+		if err != nil {
+			return nil, nil
+		}
+
+		// Track current branch names
+		currentBranches := make(map[string]bool)
+
+		for _, wt := range worktrees {
+			// Skip main worktree, default branch, preview branch, detached
+			if wt.Path == gitRoot || wt.Branch == baseBranch ||
+				wt.Branch == "main" || wt.Branch == "master" ||
+				wt.Branch == previewBranchName || wt.Detached || wt.Branch == "" {
+				continue
+			}
+
+			currentBranches[wt.Branch] = true
+
+			// Add new branch if not in branchInfo
+			if _, exists := branchInfo[wt.Branch]; !exists {
+				commitsAhead, _ := getCommitCountBetween(baseBranch, wt.Branch)
+				hasWIP := false
+				if hasChanges, err := hasUncommittedChanges(wt.Path); err == nil {
+					hasWIP = hasChanges
+				}
+
+				branchInfo[wt.Branch] = &BranchInfo{
+					Branch:       wt.Branch,
+					CommitsAhead: commitsAhead,
+					WorktreePath: wt.Path,
+					HasWIP:       hasWIP,
+				}
+				added = append(added, wt.Branch)
+
+				// Initialize state maps for new branch
+				branchEnabled[wt.Branch] = false // Off by default
+				stagedEnabled[wt.Branch] = previewStaged
+				unstagedEnabled[wt.Branch] = previewUnstaged
+				lastHeads[wt.Branch], _ = getBranchHead(wt.Branch)
+				lastWIPHash[wt.Branch] = getWIPHash(wt.Path)
+			} else {
+				// Update worktree path (might have changed)
+				branchInfo[wt.Branch].WorktreePath = wt.Path
+			}
+		}
+
+		// Find removed branches
+		for branch := range branchInfo {
+			if !currentBranches[branch] {
+				removed = append(removed, branch)
+			}
+		}
+
+		// Remove deleted branches from all maps
+		for _, branch := range removed {
+			delete(branchInfo, branch)
+			delete(branchEnabled, branch)
+			delete(stagedEnabled, branch)
+			delete(unstagedEnabled, branch)
+			delete(lastHeads, branch)
+			delete(lastWIPHash, branch)
+		}
+
+		return added, removed
+	}
+
 	pollInterval := 5 * time.Second
 
 	// Setup signal handling for graceful exit
@@ -888,6 +958,15 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 				return nil
 
 			case 'b', 'B':
+				// Refresh branch list before showing modal
+				added, removed := refreshBranchInfo()
+				if len(added) > 0 {
+					addLog("New branches available: %s", strings.Join(added, ", "))
+				}
+				if len(removed) > 0 {
+					addLog("Branches removed: %s", strings.Join(removed, ", "))
+				}
+
 				// Show branch toggle modal
 				drawScreen()
 				drawModal("Toggle Branches", buildBranchModalLines())
@@ -1060,6 +1139,17 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 			}
 
 		case <-ticker.C:
+			// Refresh branch list to detect new/removed worktrees
+			added, removed := refreshBranchInfo()
+			if len(added) > 0 {
+				addLog("New branches available: %s", strings.Join(added, ", "))
+				drawScreen()
+			}
+			if len(removed) > 0 {
+				addLog("Branches removed: %s", strings.Join(removed, ", "))
+				drawScreen()
+			}
+
 			// Get currently enabled branches
 			branches := getEnabledBranches()
 			if len(branches) == 0 {

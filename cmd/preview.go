@@ -533,8 +533,12 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Setup keyboard input handling
-	keyChan := make(chan byte, 1)
+	// Setup resize signal handling
+	resizeChan := make(chan os.Signal, 1)
+	signal.Notify(resizeChan, syscall.SIGWINCH)
+
+	// Setup keyboard input handling (using KeyInput for compatibility with diff mode)
+	keyChan := make(chan KeyInput, 1)
 	var termState *term.State
 
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -549,13 +553,14 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 			}()
 
 			go func() {
-				buf := make([]byte, 1)
 				for {
+					buf := make([]byte, 64)
 					n, err := os.Stdin.Read(buf)
-					if err != nil || n == 0 {
+					if err != nil {
+						keyChan <- KeyInput{nil, err}
 						return
 					}
-					keyChan <- buf[0]
+					keyChan <- KeyInput{buf[:n], nil}
 				}
 			}()
 		}
@@ -689,7 +694,7 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 		// Help line
 		moveCursor(row, 1)
-		helpText := " [b]ranches  [s]taged  [u]nstaged  [q]uit"
+		helpText := " [b]ranches  [s]taged  [u]nstaged  [d]iff  [q]uit"
 		fmt.Print(color.New(color.Faint).Sprint(helpText))
 		row++
 
@@ -963,7 +968,14 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 			fmt.Printf("Preview worktree remains at: %s\n", previewWorktreePath)
 			return nil
 
-		case key := <-keyChan:
+		case <-resizeChan:
+			drawScreen()
+
+		case input := <-keyChan:
+			if input.Err != nil || len(input.Data) == 0 {
+				continue
+			}
+			key := input.Data[0]
 			switch key {
 			case 'q', 'Q', 3: // q, Q, or Ctrl+C
 				clearScreen()
@@ -988,7 +1000,11 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 				// Wait for selection
 				select {
-				case menuKey := <-keyChan:
+				case menuInput := <-keyChan:
+					if menuInput.Err != nil || len(menuInput.Data) == 0 {
+						break
+					}
+					menuKey := menuInput.Data[0]
 					allBranches := getSortedAllBranches()
 					changed := false
 
@@ -1053,7 +1069,11 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 				branches := getEnabledBranches()
 				select {
-				case menuKey := <-keyChan:
+				case menuInput := <-keyChan:
+					if menuInput.Err != nil || len(menuInput.Data) == 0 {
+						break
+					}
+					menuKey := menuInput.Data[0]
 					changed := false
 					var toggledBranch string
 
@@ -1104,7 +1124,11 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 				branches := getEnabledBranches()
 				select {
-				case menuKey := <-keyChan:
+				case menuInput := <-keyChan:
+					if menuInput.Err != nil || len(menuInput.Data) == 0 {
+						break
+					}
+					menuKey := menuInput.Data[0]
 					changed := false
 					var toggledBranch string
 
@@ -1151,6 +1175,152 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 			case 'r', 'R':
 				// Force refresh
 				drawScreen()
+
+			case 'd', 'D':
+				// Show interactive branch selector for diff view
+				allBranches := getSortedAllBranches()
+				if len(allBranches) == 0 {
+					addLog("No branches available")
+					drawScreen()
+					continue
+				}
+
+				// Enter branch selection mode with cursor
+				diffCursor := 0
+				inDiffSelect := true
+
+				// Helper to draw the diff selection screen
+				drawDiffSelect := func() {
+					termWidth, termHeight, _ := getTerminalSize()
+					clearScreen()
+					hideCursor()
+
+					// Title bar
+					moveCursor(1, 1)
+					title := fmt.Sprintf(" Select branch to diff (base: %s) ", baseBranch)
+					fmt.Print(color.New(color.BgBlue, color.FgWhite, color.Bold).Sprint(title))
+					padding := termWidth - utf8.RuneCountInString(title)
+					if padding > 0 {
+						fmt.Print(color.New(color.BgBlue).Sprint(strings.Repeat(" ", padding)))
+					}
+
+					// Branch list
+					row := 3
+					for i, branch := range allBranches {
+						moveCursor(row, 2)
+						info := branchInfo[branch]
+						status := ""
+						if info != nil {
+							changes, err := getWorktreeChangeCounts(info.WorktreePath)
+							if err == nil && (changes.Staged > 0 || changes.Unstaged > 0 || changes.Untracked > 0) {
+								var parts []string
+								if changes.Staged > 0 {
+									parts = append(parts, color.GreenString("%d staged", changes.Staged))
+								}
+								if changes.Unstaged > 0 {
+									parts = append(parts, color.YellowString("%d unstaged", changes.Unstaged))
+								}
+								if changes.Untracked > 0 {
+									parts = append(parts, color.CyanString("%d untracked", changes.Untracked))
+								}
+								status = " (" + strings.Join(parts, ", ") + ")"
+							}
+						}
+
+						if i == diffCursor {
+							fmt.Print(color.New(color.Bold, color.FgCyan).Sprintf("> %s", branch))
+							fmt.Print(status)
+						} else {
+							fmt.Printf("  %s%s", branch, status)
+						}
+						row++
+					}
+
+					// Help line at bottom
+					moveCursor(termHeight-1, 1)
+					helpText := " ↑/k up  ↓/j down  enter select  q/esc cancel"
+					fmt.Print(color.New(color.Faint).Sprint(helpText))
+				}
+
+				drawDiffSelect()
+
+				// Selection loop
+				for inDiffSelect {
+					select {
+					case input := <-keyChan:
+						if input.Err != nil || len(input.Data) == 0 {
+							continue
+						}
+						key := input.Data[0]
+						switch key {
+						case 'q', 'Q': // Quit
+							inDiffSelect = false
+						case 27: // ESC - could be escape key or start of arrow sequence
+							// Check if it's an arrow key sequence (ESC [ A/B)
+							select {
+							case nextInput := <-keyChan:
+								if len(nextInput.Data) > 0 && nextInput.Data[0] == '[' {
+									// It's an escape sequence, get the direction
+									select {
+									case arrowInput := <-keyChan:
+										if len(arrowInput.Data) > 0 {
+											switch arrowInput.Data[0] {
+											case 'A': // Up arrow
+												if diffCursor > 0 {
+													diffCursor--
+													drawDiffSelect()
+												}
+											case 'B': // Down arrow
+												if diffCursor < len(allBranches)-1 {
+													diffCursor++
+													drawDiffSelect()
+												}
+											}
+										}
+									case <-time.After(50 * time.Millisecond):
+									}
+								}
+							case <-time.After(50 * time.Millisecond):
+								// Just ESC key pressed, exit
+								inDiffSelect = false
+							}
+						case 'k', 'K': // Up
+							if diffCursor > 0 {
+								diffCursor--
+								drawDiffSelect()
+							}
+						case 'j', 'J': // Down
+							if diffCursor < len(allBranches)-1 {
+								diffCursor++
+								drawDiffSelect()
+							}
+						case 13: // Enter
+							branch := allBranches[diffCursor]
+							info := branchInfo[branch]
+							if info != nil && info.WorktreePath != "" {
+								// Print mode selection before entering diff (in normal mode)
+								term.Restore(int(os.Stdin.Fd()), termState)
+								clearScreen()
+								showCursor()
+								printModeSelection(&DiffModeView{Cursor: 0, BaseBranch: baseBranch})
+								// Re-enter raw mode
+								term.MakeRaw(int(os.Stdin.Fd()))
+								// Run the interactive diff with shared channels (no competing goroutines)
+								runInteractiveDiffWithChannels(info.WorktreePath, baseBranch, keyChan, resizeChan, termState)
+								hideCursor()
+
+								addLog("Returned from diff: %s", branch)
+							} else {
+								addLog("No worktree found for %s", branch)
+							}
+							inDiffSelect = false
+						}
+					case <-time.After(30 * time.Second):
+						addLog("Timeout - cancelled")
+						inDiffSelect = false
+					}
+				}
+				drawScreen()
 			}
 
 		case <-ticker.C:
@@ -1178,6 +1348,12 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 				if currentHead != lastHeads[branch] {
 					changedBranches = append(changedBranches, branch)
 					lastHeads[branch] = currentHead
+					// Recalculate commit count when head changes (new commit)
+					if info := branchInfo[branch]; info != nil {
+						if newCount, err := getCommitCountBetween(baseBranch, branch); err == nil {
+							info.CommitsAhead = newCount
+						}
+					}
 				}
 			}
 

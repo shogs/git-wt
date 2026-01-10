@@ -3,9 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/fatih/color"
 	"golang.org/x/term"
@@ -1291,99 +1293,151 @@ func loadFileDiff(worktreePath, baseBranch string, file *ChangedFile, staged, un
 	return dv, nil
 }
 
-// runInteractiveDiff runs the complete interactive diff flow with mode selection
+// KeyInput holds keyboard input data for channel communication
+type KeyInput struct {
+	Data []byte
+	Err  error
+}
+
+// runInteractiveDiff runs the complete interactive diff flow with mode selection (standalone)
 func runInteractiveDiff(worktreePath, baseBranch string) error {
+	// Setup resize signal handling
+	resizeChan := make(chan os.Signal, 1)
+	signal.Notify(resizeChan, syscall.SIGWINCH)
+	defer signal.Stop(resizeChan)
+
+	// Print initial mode selection (before raw mode so newlines work)
+	printModeSelection(&DiffModeView{Cursor: 0, BaseBranch: baseBranch})
+
+	// Enter raw mode for the entire interactive session
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("failed to set raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Single shared channel for keyboard input
+	keyChan := make(chan KeyInput, 1)
+
+	// Single goroutine to read keyboard input for the entire session
+	go func() {
+		for {
+			buf := make([]byte, 64)
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				keyChan <- KeyInput{nil, err}
+				return
+			}
+			keyChan <- KeyInput{buf[:n], nil}
+		}
+	}()
+
+	return runInteractiveDiffWithChannels(worktreePath, baseBranch, keyChan, resizeChan, oldState)
+}
+
+// runInteractiveDiffWithChannels runs the interactive diff flow using provided channels
+// Caller must: 1) print initial mode selection, 2) be in raw mode, 3) provide active channels
+// termState is the pre-raw-mode terminal state for restore/re-enter cycles
+func runInteractiveDiffWithChannels(worktreePath, baseBranch string, keyChan chan KeyInput, resizeChan chan os.Signal, termState *term.State) error {
 	modeView := &DiffModeView{
 		Cursor:     0,
 		BaseBranch: baseBranch,
 	}
 
-	b := make([]byte, 64)
-
-	// Print initial mode selection
-	printModeSelection(modeView)
+	// Use provided terminal state for restore/re-enter cycles
+	oldState := termState
 
 	for {
-		// Get terminal into raw mode for mode selection input
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			return fmt.Errorf("failed to set raw mode: %w", err)
-		}
-
-		// Read input
-		n, err := os.Stdin.Read(b)
-		term.Restore(int(os.Stdin.Fd()), oldState)
-
-		if err != nil {
-			return err
-		}
-
-		key := parseKeypress(b, n)
-		action := handleModeSelectionInput(modeView, key)
-
-		switch action {
-		case ViewActionQuit:
-			fmt.Println()
-			return nil
-		case ViewActionSelect:
-			// Determine mode based on cursor
-			var staged, unstaged bool
-			switch modeView.Cursor {
-			case 0: // Compare against base
-				staged, unstaged = false, false
-			case 1: // Staged
-				staged, unstaged = true, false
-			case 2: // Unstaged
-				staged, unstaged = false, true
-			}
-
-			// Get changed files for selected mode
-			files, err := getChangedFiles(worktreePath, baseBranch, staged, unstaged)
-			if err != nil {
-				fmt.Println()
-				return fmt.Errorf("failed to get changed files: %w", err)
-			}
-
-			if len(files) == 0 {
-				// Clear mode selection and show message
-				fmt.Printf("\033[5F\033[J") // Move up 5 lines and clear
-				if staged {
-					color.Green("No staged changes")
-				} else if unstaged {
-					color.Green("No unstaged changes")
-				} else {
-					color.Green("No changes compared to %s", baseBranch)
-				}
-				fmt.Println()
-				// Re-print mode selection
-				printModeSelection(modeView)
-				continue
-			}
-
-			// Clear mode selection before showing file list
-			fmt.Printf("\033[5F\033[J") // Move up 5 lines and clear
-
-			// Run file list viewer, returns true if quit, false if go back
-			quit, err := runFileListViewer(files, worktreePath, baseBranch, staged, unstaged)
-			if err != nil {
-				return err
-			}
-			if quit {
-				return nil
-			}
-
-			// User pressed Esc, re-print mode selection
-			printModeSelection(modeView)
-
-		case ViewActionRedraw:
+		select {
+		case <-resizeChan:
+			// Restore terminal for printing, then re-enter raw mode
+			term.Restore(int(os.Stdin.Fd()), oldState)
 			redrawModeSelection(modeView)
+			oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+		case input := <-keyChan:
+			if input.Err != nil {
+				return input.Err
+			}
+
+			key := parseKeypress(input.Data, len(input.Data))
+			action := handleModeSelectionInput(modeView, key)
+
+			switch action {
+			case ViewActionQuit:
+				fmt.Println()
+				return nil
+			case ViewActionSelect:
+				// Determine mode based on cursor
+				var staged, unstaged bool
+				switch modeView.Cursor {
+				case 0: // Compare against base
+					staged, unstaged = false, false
+				case 1: // Staged
+					staged, unstaged = true, false
+				case 2: // Unstaged
+					staged, unstaged = false, true
+				}
+
+				// Get changed files for selected mode
+				files, err := getChangedFiles(worktreePath, baseBranch, staged, unstaged)
+				if err != nil {
+					fmt.Println()
+					return fmt.Errorf("failed to get changed files: %w", err)
+				}
+
+				if len(files) == 0 {
+					// Restore terminal for printing
+					term.Restore(int(os.Stdin.Fd()), oldState)
+					// Clear mode selection and show message
+					fmt.Printf("\033[5F\033[J") // Move up 5 lines and clear
+					if staged {
+						color.Green("No staged changes")
+					} else if unstaged {
+						color.Green("No unstaged changes")
+					} else {
+						color.Green("No changes compared to %s", baseBranch)
+					}
+					fmt.Println()
+					// Re-print mode selection
+					printModeSelection(modeView)
+					// Re-enter raw mode
+					oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+					continue
+				}
+
+				// Restore terminal for printing
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				// Clear mode selection before showing file list
+				fmt.Printf("\033[5F\033[J") // Move up 5 lines and clear
+
+				// Run file list viewer with shared channels, returns true if quit, false if go back
+				quit, err := runFileListViewerWithChannels(files, worktreePath, baseBranch, staged, unstaged, keyChan, resizeChan)
+
+				if err != nil {
+					return err
+				}
+				if quit {
+					return nil
+				}
+
+				// User pressed Esc, re-print mode selection
+				printModeSelection(modeView)
+				// Re-enter raw mode for mode selection
+				oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+
+			case ViewActionRedraw:
+				// Restore terminal for printing, then re-enter raw mode
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				redrawModeSelection(modeView)
+				oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+			}
 		}
 	}
 }
 
-// runFileListViewer runs the file list and diff viewer loop
+// runFileListViewerWithChannels runs the file list and diff viewer loop with shared channels
 // Returns: quit (true = quit completely, false = go back to mode selection), error
-func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, staged, unstaged bool) (bool, error) {
+func runFileListViewerWithChannels(files []ChangedFile, worktreePath, baseBranch string, staged, unstaged bool, keyChan chan KeyInput, resizeChan chan os.Signal) (bool, error) {
 	// Initialize file list view
 	title := fmt.Sprintf("Changed files (compared to %s):", baseBranch)
 	mode := DiffModeBase
@@ -1412,120 +1466,148 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 	// Print initial file list (inline)
 	printFileList(fileList)
 
-	// Main event loop - larger buffer for mouse events
-	b := make([]byte, 64)
+	// Enter raw mode for the file list session
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return true, fmt.Errorf("failed to set raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Helper function to run diff view with persistent raw mode
+	// Helper function to run diff view (uses shared keyChan and resizeChan)
 	// Returns: (exitCompletely, needsRefresh)
 	runDiffViewLoop := func() (exitCompletely bool, needsRefresh bool) {
-		// Enter raw mode for the entire diff view session
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			return true, false
-		}
-		defer term.Restore(int(os.Stdin.Fd()), oldState)
-
 		hideCursor()
 		renderDiffView(currentDiff)
 
 		for {
-			n, err := os.Stdin.Read(b)
-			if err != nil {
-				return true, false
-			}
-
-			key := parseKeypress(b, n)
-			action := handleDiffViewInput(currentDiff, key)
-
-			switch action {
-			case ViewActionClose:
-				disableMouseTracking()
-				clearScreen()
-				showCursor()
-				return false, false // Go back to file list
-			case ViewActionQuit:
-				disableMouseTracking()
-				clearScreen()
-				showCursor()
-				return true, false // Exit completely
-			case ViewActionRedraw:
+			select {
+			case <-resizeChan:
 				renderDiffView(currentDiff)
-			case ViewActionRefresh:
-				// Reload the diff after staging/unstaging a hunk
-				file := currentDiff.File
-				newDiff, err := loadFileDiff(worktreePath, baseBranch, file, staged, unstaged)
-				if err != nil || len(newDiff.Lines) == 0 || newDiff.RawDiff == "" {
-					// No more changes in this file, go back to file list
+			case input := <-keyChan:
+				if input.Err != nil {
+					return true, false
+				}
+
+				key := parseKeypress(input.Data, len(input.Data))
+				action := handleDiffViewInput(currentDiff, key)
+
+				switch action {
+				case ViewActionClose:
 					disableMouseTracking()
 					clearScreen()
 					showCursor()
-					return false, true // Go back and refresh file list
+					return false, false // Go back to file list
+				case ViewActionQuit:
+					disableMouseTracking()
+					clearScreen()
+					showCursor()
+					return true, false // Exit completely
+				case ViewActionRedraw:
+					renderDiffView(currentDiff)
+				case ViewActionRefresh:
+					// Reload the diff after staging/unstaging a hunk
+					file := currentDiff.File
+					newDiff, err := loadFileDiff(worktreePath, baseBranch, file, staged, unstaged)
+					if err != nil || len(newDiff.Lines) == 0 || newDiff.RawDiff == "" {
+						// No more changes in this file, go back to file list
+						disableMouseTracking()
+						clearScreen()
+						showCursor()
+						return false, true // Go back and refresh file list
+					}
+					currentDiff = newDiff
+					renderDiffView(currentDiff)
 				}
-				currentDiff = newDiff
-				renderDiffView(currentDiff)
 			}
 		}
 	}
 
 	for {
-		// Get terminal into raw mode for file list input
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			return true, fmt.Errorf("failed to set raw mode: %w", err)
-		}
+		select {
+		case <-resizeChan:
+			// Restore terminal for printing, then re-enter raw mode
+			term.Restore(int(os.Stdin.Fd()), oldState)
+			redrawFileList(fileList, totalLines)
+			oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+		case input := <-keyChan:
+			if input.Err != nil {
+				return true, input.Err
+			}
 
-		// Read input
-		n, err := os.Stdin.Read(b)
+			key := parseKeypress(input.Data, len(input.Data))
 
-		// Restore terminal before processing
-		term.Restore(int(os.Stdin.Fd()), oldState)
-
-		if err != nil {
-			return true, err
-		}
-
-		key := parseKeypress(b, n)
-
-		if inDiffView {
-			// This branch shouldn't be reached anymore since diff view
-			// is now handled in its own loop, but keep for safety
-			continue
-		}
-
-		action := handleFileListInput(fileList, key)
-		switch action {
-		case ViewActionQuit:
-			fmt.Println()
-			return true, nil // Quit completely
-		case ViewActionClose:
-			// Clear file list and go back to mode selection
-			fmt.Printf("\033[%dF\033[J", totalLines)
-			return false, nil // Go back
-		case ViewActionSelect:
-			// Load and show diff (full-screen)
-			file := &fileList.Files[fileList.Cursor]
-			diff, err := loadFileDiff(worktreePath, baseBranch, file, staged, unstaged)
-			if err != nil {
+			if inDiffView {
+				// This branch shouldn't be reached anymore since diff view
+				// is now handled in its own loop, but keep for safety
 				continue
 			}
-			currentDiff = diff
-			inDiffView = true
 
-			// Run the diff view loop (stays in raw mode the entire time)
-			exitCompletely, needsRefresh := runDiffViewLoop()
-			inDiffView = false
-			currentDiff = nil
-
-			if exitCompletely {
+			action := handleFileListInput(fileList, key)
+			switch action {
+			case ViewActionQuit:
 				fmt.Println()
 				return true, nil // Quit completely
-			}
+			case ViewActionClose:
+				// Clear file list and go back to mode selection
+				fmt.Printf("\033[%dF\033[J", totalLines)
+				return false, nil // Go back
+			case ViewActionSelect:
+				// Load and show diff (full-screen)
+				file := &fileList.Files[fileList.Cursor]
+				diff, err := loadFileDiff(worktreePath, baseBranch, file, staged, unstaged)
+				if err != nil {
+					continue
+				}
+				currentDiff = diff
+				inDiffView = true
 
-			// If hunk was staged/unstaged, refresh the file list
-			if needsRefresh {
+				// Run the diff view loop (uses shared channels, stays in raw mode)
+				exitCompletely, needsRefresh := runDiffViewLoop()
+				inDiffView = false
+				currentDiff = nil
+
+				if exitCompletely {
+					fmt.Println()
+					return true, nil // Quit completely
+				}
+
+				// If hunk was staged/unstaged, refresh the file list
+				if needsRefresh {
+					newFiles, err := getChangedFiles(worktreePath, baseBranch, staged, unstaged)
+					if err == nil {
+						fileList.Files = newFiles
+						if fileList.Cursor >= len(newFiles) {
+							fileList.Cursor = len(newFiles) - 1
+						}
+						if fileList.Cursor < 0 {
+							fileList.Cursor = 0
+						}
+						totalLines = len(newFiles) + 2
+						if len(newFiles) == 0 {
+							return false, nil // No more files, go back to mode selection
+						}
+					}
+				}
+
+				// Restore terminal for printing, then re-enter raw mode
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				printFileList(fileList)
+				oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+			case ViewActionRedraw:
+				// Restore terminal for printing, then re-enter raw mode
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				redrawFileList(fileList, totalLines)
+				oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+			case ViewActionRefresh:
+				// Restore terminal for printing
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				// Refresh file list after stage/unstage
 				newFiles, err := getChangedFiles(worktreePath, baseBranch, staged, unstaged)
 				if err == nil {
+					// Clear old list
+					fmt.Printf("\033[%dF\033[J", totalLines)
 					fileList.Files = newFiles
+					// Adjust cursor if needed
 					if fileList.Cursor >= len(newFiles) {
 						fileList.Cursor = len(newFiles) - 1
 					}
@@ -1534,38 +1616,50 @@ func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, sta
 					}
 					totalLines = len(newFiles) + 2
 					if len(newFiles) == 0 {
-						return false, nil // No more files, go back to mode selection
+						// No more files, go back to mode selection
+						return false, nil
 					}
+					printFileList(fileList)
 				}
-			}
-
-			// Re-print the file list inline
-			printFileList(fileList)
-		case ViewActionRedraw:
-			redrawFileList(fileList, totalLines)
-		case ViewActionRefresh:
-			// Refresh file list after stage/unstage
-			newFiles, err := getChangedFiles(worktreePath, baseBranch, staged, unstaged)
-			if err == nil {
-				// Clear old list
-				fmt.Printf("\033[%dF\033[J", totalLines)
-				fileList.Files = newFiles
-				// Adjust cursor if needed
-				if fileList.Cursor >= len(newFiles) {
-					fileList.Cursor = len(newFiles) - 1
-				}
-				if fileList.Cursor < 0 {
-					fileList.Cursor = 0
-				}
-				totalLines = len(newFiles) + 2
-				if len(newFiles) == 0 {
-					// No more files, go back to mode selection
-					return false, nil
-				}
-				printFileList(fileList)
+				// Re-enter raw mode
+				oldState, _ = term.MakeRaw(int(os.Stdin.Fd()))
 			}
 		}
 	}
+}
+
+// runFileListViewer runs the file list viewer with its own channels (standalone mode)
+// Returns: quit (true = quit completely, false = go back), error
+func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, staged, unstaged bool) (bool, error) {
+	// Setup resize signal handling for standalone mode
+	resizeChan := make(chan os.Signal, 1)
+	signal.Notify(resizeChan, syscall.SIGWINCH)
+	defer signal.Stop(resizeChan)
+
+	// Enter raw mode and create keyboard channel for standalone mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return true, fmt.Errorf("failed to set raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	keyChan := make(chan KeyInput, 1)
+	go func() {
+		for {
+			buf := make([]byte, 64)
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				keyChan <- KeyInput{nil, err}
+				return
+			}
+			keyChan <- KeyInput{buf[:n], nil}
+		}
+	}()
+
+	// Restore terminal for initial print, then re-enter raw mode
+	term.Restore(int(os.Stdin.Fd()), oldState)
+	quit, err := runFileListViewerWithChannels(files, worktreePath, baseBranch, staged, unstaged, keyChan, resizeChan)
+	return quit, err
 }
 
 // runDiffViewer runs the diff viewer (legacy entry point, used when flags are provided)

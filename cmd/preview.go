@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -541,6 +543,32 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 	keyChan := make(chan KeyInput, 1)
 	var termState *term.State
 
+	// Flag to pause stdin reading (for runActions compatibility)
+	var inputPaused bool
+	var inputPausedMu sync.Mutex
+
+	// Helper to pause stdin reading for external input (like runActions)
+	pauseInput := func() {
+		inputPausedMu.Lock()
+		inputPaused = true
+		inputPausedMu.Unlock()
+		// Drain any pending input from channel
+		for {
+			select {
+			case <-keyChan:
+			default:
+				return
+			}
+		}
+	}
+
+	// Helper to resume stdin reading
+	resumeInput := func() {
+		inputPausedMu.Lock()
+		inputPaused = false
+		inputPausedMu.Unlock()
+	}
+
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		var err error
 		termState, err = term.MakeRaw(int(os.Stdin.Fd()))
@@ -553,14 +581,49 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 			}()
 
 			go func() {
+				fd := int(os.Stdin.Fd())
 				for {
+					// Check if paused - if so, wait until resumed
+					inputPausedMu.Lock()
+					paused := inputPaused
+					inputPausedMu.Unlock()
+					if paused {
+						time.Sleep(50 * time.Millisecond)
+						continue
+					}
+
+					// Use select() to poll stdin with 100ms timeout
+					// This allows us to check pause flag frequently
+					var readfds syscall.FdSet
+					readfds.Bits[fd/64] |= 1 << (uint(fd) % 64)
+					tv := syscall.Timeval{Sec: 0, Usec: 100000} // 100ms
+
+					err := syscall.Select(fd+1, &readfds, nil, nil, &tv)
+					if err != nil {
+						continue // Timeout or error, loop back and check pause
+					}
+					// Check if stdin is ready (bit still set means data available)
+					if readfds.Bits[fd/64]&(1<<(uint(fd)%64)) == 0 {
+						continue // No data, timeout occurred
+					}
+
+					// Data available - check pause again before reading
+					inputPausedMu.Lock()
+					paused = inputPaused
+					inputPausedMu.Unlock()
+					if paused {
+						continue
+					}
+
+					// Read the available data
 					buf := make([]byte, 64)
-					n, err := os.Stdin.Read(buf)
+					nr, err := os.Stdin.Read(buf)
 					if err != nil {
 						keyChan <- KeyInput{nil, err}
 						return
 					}
-					keyChan <- KeyInput{buf[:n], nil}
+
+					keyChan <- KeyInput{buf[:nr], nil}
 				}
 			}()
 		}
@@ -694,7 +757,7 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 		// Help line
 		moveCursor(row, 1)
-		helpText := " [b]ranches  [s]taged  [u]nstaged  [d]iff  [q]uit"
+		helpText := " [b]ranches  [s]taged  [u]nstaged  [d]iff  [c]reate  [q]uit"
 		fmt.Print(color.New(color.Faint).Sprint(helpText))
 		row++
 
@@ -1174,6 +1237,156 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 			case 'r', 'R':
 				// Force refresh
+				drawScreen()
+
+			case 'c', 'C':
+				// Create new worktree
+				clearScreen()
+				showCursor()
+				moveCursor(1, 1)
+				fmt.Print("Enter new branch name (Esc to cancel): ")
+
+				// Read branch name in raw mode (character by character)
+				var branchName string
+				cancelled := false
+			inputLoop:
+				for {
+					select {
+					case input := <-keyChan:
+						if input.Err != nil || len(input.Data) == 0 {
+							continue
+						}
+						b := input.Data[0]
+						switch b {
+						case 27: // Escape
+							cancelled = true
+							break inputLoop
+						case 13: // Enter
+							break inputLoop
+						case 127, 8: // Backspace (127 = DEL, 8 = BS)
+							if len(branchName) > 0 {
+								branchName = branchName[:len(branchName)-1]
+								fmt.Print("\b \b") // Erase character
+							}
+						default:
+							if b >= 32 && b < 127 { // Printable ASCII
+								branchName += string(b)
+								fmt.Print(string(b))
+							}
+						}
+					case <-time.After(60 * time.Second):
+						cancelled = true
+						break inputLoop
+					}
+				}
+
+				if cancelled || branchName == "" {
+					// Cancelled
+					hideCursor()
+					drawScreen()
+					continue
+				}
+
+				// Exit raw mode for validation messages and config actions
+				term.Restore(int(os.Stdin.Fd()), termState)
+				pauseInput() // Stop stdin goroutine from competing with input
+				fmt.Println() // New line after input
+
+				// Validate branch doesn't exist
+				if branchExists(branchName) {
+					fmt.Printf("Branch '%s' already exists\n", branchName)
+					fmt.Print("Press Enter to continue...")
+					fmt.Scanln()
+					resumeInput()
+					hideCursor()
+					termState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+					drawScreen()
+					continue
+				}
+
+				// Check for existing worktree
+				if wt, _ := findWorktreeByBranch(branchName); wt != nil {
+					fmt.Printf("Worktree for '%s' already exists\n", branchName)
+					fmt.Print("Press Enter to continue...")
+					fmt.Scanln()
+					resumeInput()
+					hideCursor()
+					termState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+					drawScreen()
+					continue
+				}
+
+				// Create worktree
+				worktreeDir, err := ensureWorktreeDir()
+				if err != nil {
+					fmt.Printf("Failed to create worktree directory: %v\n", err)
+					fmt.Print("Press Enter to continue...")
+					fmt.Scanln()
+					resumeInput()
+					hideCursor()
+					termState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+					drawScreen()
+					continue
+				}
+
+				worktreePath := filepath.Join(worktreeDir, branchName)
+				if err := createWorktree(branchName, baseBranch, worktreePath, true); err != nil {
+					fmt.Printf("Failed to create worktree: %v\n", err)
+					fmt.Print("Press Enter to continue...")
+					fmt.Scanln()
+					resumeInput()
+					hideCursor()
+					termState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+					drawScreen()
+					continue
+				}
+
+				// Save session
+				session := &Session{
+					Branch:     branchName,
+					Created:    time.Now(),
+					BaseBranch: baseBranch,
+				}
+				saveSession(worktreePath, session)
+
+				// Run config actions
+				config, _ := loadConfig()
+				if len(config.New) > 0 {
+					fmt.Println("\nRunning new actions...")
+					runActions(config.New, worktreePath, branchName, baseBranch)
+				}
+
+				fmt.Println()
+				color.Green("Created worktree: %s", branchName)
+				fmt.Print("Press Enter to continue...")
+				fmt.Scanln()
+
+				// Update preview state
+				commitsAhead, _ := getCommitCountBetween(baseBranch, branchName)
+				branchInfo[branchName] = &BranchInfo{
+					Branch:       branchName,
+					CommitsAhead: commitsAhead,
+					WorktreePath: worktreePath,
+					HasWIP:       false,
+				}
+				branchEnabled[branchName] = true
+				stagedEnabled[branchName] = previewStaged
+				unstagedEnabled[branchName] = previewUnstaged
+				lastHeads[branchName], _ = getBranchHead(branchName)
+				lastWIPHash[branchName] = getWIPHash(worktreePath)
+
+				// Log success and hint
+				addLog("Created worktree: %s", branchName)
+				addLog("Switch with: git-wt switch %s", branchName)
+
+				// Re-enter raw mode and rebuild
+				resumeInput()
+				hideCursor()
+				termState, _ = term.MakeRaw(int(os.Stdin.Fd()))
+
+				if err := rebuildWithTUI("new branch created"); err != nil {
+					addLog("Rebuild failed: %v", err)
+				}
 				drawScreen()
 
 			case 'd', 'D':

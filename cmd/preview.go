@@ -535,7 +535,7 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 
 	// Setup resize signal handling
 	resizeChan := make(chan os.Signal, 1)
-	signal.Notify(resizeChan, syscall.SIGWINCH)
+	signal.Notify(resizeChan, sigwinch)
 
 	// Setup keyboard input handling (using KeyInput for compatibility with diff mode)
 	keyChan := make(chan KeyInput, 1)

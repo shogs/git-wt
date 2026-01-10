@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/fatih/color"
 	"golang.org/x/term"
@@ -1303,7 +1302,7 @@ type KeyInput struct {
 func runInteractiveDiff(worktreePath, baseBranch string) error {
 	// Setup resize signal handling
 	resizeChan := make(chan os.Signal, 1)
-	signal.Notify(resizeChan, syscall.SIGWINCH)
+	signal.Notify(resizeChan, sigwinch)
 	defer signal.Stop(resizeChan)
 
 	// Print initial mode selection (before raw mode so newlines work)
@@ -1633,7 +1632,7 @@ func runFileListViewerWithChannels(files []ChangedFile, worktreePath, baseBranch
 func runFileListViewer(files []ChangedFile, worktreePath, baseBranch string, staged, unstaged bool) (bool, error) {
 	// Setup resize signal handling for standalone mode
 	resizeChan := make(chan os.Signal, 1)
-	signal.Notify(resizeChan, syscall.SIGWINCH)
+	signal.Notify(resizeChan, sigwinch)
 	defer signal.Stop(resizeChan)
 
 	// Enter raw mode and create keyboard channel for standalone mode

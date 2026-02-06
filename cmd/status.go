@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -44,38 +44,65 @@ var statusCmd = &cobra.Command{
 
 		for _, wt := range worktrees {
 			isMain := wt.Path == gitRoot
-			isCurrent := wt.Path == cwd || (wt.Path != gitRoot && len(cwd) > len(wt.Path) && cwd[:len(wt.Path)] == wt.Path)
+			isCurrent := strings.HasPrefix(cwd, wt.Path)
 
-			prefix := "  "
+			// Format branch name
+			branchName := wt.Branch
+			if wt.Detached {
+				branchName = color.RedString("(detached HEAD)")
+			} else if branchName == "" {
+				branchName = color.YellowString("(no branch)")
+			}
+
+			// Print worktree info
 			if isCurrent {
-				prefix = "* "
-				color.Green(prefix + wt.Branch)
+				color.Green("* %s", branchName)
 			} else {
-				fmt.Print(prefix + wt.Branch)
+				fmt.Printf("  %s", branchName)
 			}
 
 			if isMain {
 				color.Cyan(" [main]")
 			}
 
-			// Check for uncommitted changes
-			if !isMain {
-				hasChanges, err := hasUncommittedChanges(wt.Path)
-				if err == nil && hasChanges {
-					color.Yellow(" (uncommitted changes)")
+			// Get and display status indicators
+			if !wt.Detached && wt.Branch != "" {
+				var indicators []string
+
+				// Get worktree status (modified, untracked, staged)
+				status, err := getWorktreeStatus(wt.Path)
+				if err == nil && status != nil {
+					if status.Staged > 0 {
+						indicators = append(indicators, color.GreenString("+%d", status.Staged))
+					}
+					if status.Modified > 0 {
+						indicators = append(indicators, color.YellowString("*%d", status.Modified))
+					}
+					if status.Untracked > 0 {
+						indicators = append(indicators, color.YellowString("?%d", status.Untracked))
+					}
+				}
+
+				// Get ahead/behind count
+				aheadBehind, err := getAheadBehindCount(wt.Path, wt.Branch)
+				if err == nil && aheadBehind != nil {
+					if aheadBehind.Ahead > 0 {
+						indicators = append(indicators, color.CyanString("↑%d", aheadBehind.Ahead))
+					}
+					if aheadBehind.Behind > 0 {
+						indicators = append(indicators, color.RedString("↓%d", aheadBehind.Behind))
+					}
+				}
+
+				// Print indicators
+				if len(indicators) > 0 {
+					fmt.Printf(" %s", strings.Join(indicators, " "))
 				}
 			}
 
 			fmt.Println()
+			fmt.Printf("    %s\n", wt.Path)
 		}
-
-		// Display git status
-		fmt.Println()
-		color.Cyan("Git Status:\n")
-		gitCmd := exec.Command("git", "status", "--short", "--branch")
-		gitCmd.Stdout = os.Stdout
-		gitCmd.Stderr = os.Stderr
-		gitCmd.Run()
 
 		return nil
 	},

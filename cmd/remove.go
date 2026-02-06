@@ -119,12 +119,8 @@ func doRemoveWorktree(branch string) error {
 		return fmt.Errorf("cannot remove worktree while inside it. Please navigate out first")
 	}
 
-	// Load session early to get baseBranch for unpushed commit check
-	session, _ := loadSession(wt.Path)
-	baseBranch := ""
-	if session != nil {
-		baseBranch = session.BaseBranch
-	}
+	// Use default branch as baseBranch
+	baseBranch, _ := getDefaultBranch()
 
 	// Check for uncommitted changes
 	hasChanges, err := hasUncommittedChanges(wt.Path)
@@ -253,11 +249,6 @@ func doRemoveWorktree(branch string) error {
 		if err := runActions(config.Remove, wt.Path, branch, baseBranch); err != nil {
 			color.Yellow("⚠ Remove actions completed with errors")
 		}
-	}
-
-	// Remove session file
-	if err := deleteSession(wt.Path); err != nil {
-		color.Yellow("⚠ Failed to remove session file: %v", err)
 	}
 
 	// Remove worktree

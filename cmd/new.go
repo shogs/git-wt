@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -75,16 +74,6 @@ var newCmd = &cobra.Command{
 
 		color.Green("✓ Worktree created at %s", worktreePath)
 
-		// Create session file
-		session := &Session{
-			Branch:     branchName,
-			Created:    time.Now(),
-			BaseBranch: baseBranch,
-		}
-		if err := saveSession(worktreePath, session); err != nil {
-			color.Yellow("⚠ Failed to create session file: %v", err)
-		}
-
 		// Run new actions
 		config, err := loadConfig()
 		if err != nil {
@@ -99,13 +88,7 @@ var newCmd = &cobra.Command{
 		fmt.Println()
 		color.Green("✓ Ready to work in %s", worktreePath)
 
-		// Ask if user wants to switch to the new worktree
-		fmt.Println()
-		if confirmWithDefault("Switch to new worktree?", true) {
-			return spawnWorktreeShell(worktreePath, branchName)
-		}
-
-		fmt.Println("\nTo switch to this worktree later:")
+		fmt.Println("\nTo switch to this worktree:")
 		color.Cyan("  git-wt switch %s", branchName)
 
 		return nil

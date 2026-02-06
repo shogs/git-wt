@@ -91,56 +91,6 @@ var switchCmd = &cobra.Command{
 	},
 }
 
-var resumeCmd = &cobra.Command{
-	Use:   "resume <branch>",
-	Short: "Resume work in a worktree",
-	Long:  `Switches to a worktree and displays session information.`,
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := ensureGitRepo(); err != nil {
-			return err
-		}
-
-		branch := args[0]
-
-		// Find worktree
-		wt, err := findWorktreeByBranch(branch)
-		if err != nil {
-			return err
-		}
-		if wt == nil {
-			return fmt.Errorf("no worktree found for branch '%s'", branch)
-		}
-
-		// Load session
-		session, err := loadSession(wt.Path)
-		if err != nil {
-			color.Yellow("⚠ Failed to load session: %v", err)
-		}
-
-		// Display session info
-		if session != nil {
-			fmt.Println()
-			color.Cyan("═══ Resuming: %s ═══", branch)
-			if session.Task != "" {
-				fmt.Printf("Task: %s\n", session.Task)
-			}
-			fmt.Printf("Created: %s\n", session.Created.Format("2006-01-02 15:04"))
-			fmt.Printf("Base: %s\n", session.BaseBranch)
-			fmt.Println()
-		}
-
-		if printPath {
-			// Just print the path for shell integration
-			fmt.Println(wt.Path)
-			return nil
-		}
-
-		// Spawn a new shell in the worktree (default)
-		return spawnWorktreeShell(wt.Path, branch)
-	},
-}
-
 func spawnWorktreeShell(path, branch string) error {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
@@ -170,8 +120,5 @@ func spawnWorktreeShell(path, branch string) error {
 
 func init() {
 	rootCmd.AddCommand(switchCmd)
-	rootCmd.AddCommand(resumeCmd)
-
 	switchCmd.Flags().BoolVarP(&printPath, "path", "p", false, "Print worktree path instead of spawning shell")
-	resumeCmd.Flags().BoolVarP(&printPath, "path", "p", false, "Print worktree path instead of spawning shell")
 }

@@ -477,38 +477,3 @@ func redrawSingleSelect(title string, items []string, cursor int, totalLines int
 	}
 	fmt.Print(color.New(color.Faint).Sprint("↑/k up  ↓/j down  enter select  q cancel"))
 }
-
-// getTerminalSize returns the current terminal width and height
-func getTerminalSize() (width, height int, err error) {
-	width, height, err = term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		// Fallback to reasonable defaults
-		return 80, 24, nil
-	}
-	return width, height, nil
-}
-
-// clearScreen clears the terminal screen and moves cursor to top-left
-func clearScreen() {
-	fmt.Print("\033[2J\033[H")
-}
-
-// moveCursor moves the terminal cursor to the specified row and column (1-indexed)
-func moveCursor(row, col int) {
-	fmt.Printf("\033[%d;%dH", row, col)
-}
-
-// hideCursor hides the terminal cursor
-func hideCursor() {
-	fmt.Print("\033[?25l")
-}
-
-// showCursor shows the terminal cursor
-func showCursor() {
-	fmt.Print("\033[?25h")
-}
-
-// clearToEndOfScreen clears from cursor to end of screen
-func clearToEndOfScreen() {
-	fmt.Print("\033[J")
-}

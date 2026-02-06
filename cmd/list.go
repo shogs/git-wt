@@ -102,20 +102,6 @@ var listCmd = &cobra.Command{
 				fmt.Printf("    Path: %s\n", wt.Path)
 				fmt.Printf("    HEAD: %s\n", wt.Head[:8])
 
-				// Load and display session info
-				if !isMain {
-					session, err := loadSession(wt.Path)
-					if err == nil && session != nil {
-						if session.BaseBranch != "" {
-							fmt.Printf("    Base: %s\n", session.BaseBranch)
-						}
-						if session.Task != "" {
-							fmt.Printf("    Task: %s\n", session.Task)
-						}
-						fmt.Printf("    Created: %s\n", session.Created.Format("2006-01-02 15:04"))
-					}
-				}
-
 				// Add spacing between entries
 				if i < len(worktrees)-1 {
 					fmt.Println()

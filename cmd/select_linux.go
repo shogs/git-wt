@@ -2,9 +2,19 @@
 
 package cmd
 
-import "syscall"
+import (
+	"syscall"
+	"time"
+)
 
-func sysSelect(nfd int, r *syscall.FdSet, w *syscall.FdSet, e *syscall.FdSet, timeout *syscall.Timeval) error {
-	_, err := syscall.Select(nfd, r, w, e, timeout)
-	return err
+func pollStdinReady(fd int, timeout time.Duration) bool {
+	var readfds syscall.FdSet
+	readfds.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	tv := syscall.Timeval{Sec: 0, Usec: timeout.Microseconds()}
+
+	_, err := syscall.Select(fd+1, &readfds, nil, nil, &tv)
+	if err != nil {
+		return false
+	}
+	return readfds.Bits[fd/64]&(1<<(uint(fd)%64)) != 0
 }

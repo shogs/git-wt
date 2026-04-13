@@ -592,19 +592,10 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 						continue
 					}
 
-					// Use select() to poll stdin with 100ms timeout
+					// Poll stdin with 100ms timeout
 					// This allows us to check pause flag frequently
-					var readfds syscall.FdSet
-					readfds.Bits[fd/64] |= 1 << (uint(fd) % 64)
-					tv := syscall.Timeval{Sec: 0, Usec: 100000} // 100ms
-
-					err := sysSelect(fd+1, &readfds, nil, nil, &tv)
-					if err != nil {
-						continue // Timeout or error, loop back and check pause
-					}
-					// Check if stdin is ready (bit still set means data available)
-					if readfds.Bits[fd/64]&(1<<(uint(fd)%64)) == 0 {
-						continue // No data, timeout occurred
+					if !pollStdinReady(fd, 100*time.Millisecond) {
+						continue
 					}
 
 					// Data available - check pause again before reading

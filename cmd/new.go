@@ -38,10 +38,15 @@ var newCmd = &cobra.Command{
 		if len(args) > 1 {
 			baseBranch = args[1]
 		} else {
-			var err error
-			baseBranch, err = getDefaultBranch()
-			if err != nil {
-				baseBranch = "main" // fallback
+			currentBranch, err := getCurrentBranch()
+			if err != nil || currentBranch == "" || currentBranch == "HEAD" {
+				// Detached HEAD or error — fall back to default branch
+				baseBranch, err = getDefaultBranch()
+				if err != nil {
+					baseBranch = "main"
+				}
+			} else {
+				baseBranch = currentBranch
 			}
 		}
 

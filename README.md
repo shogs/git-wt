@@ -385,6 +385,119 @@ make install
 
 This builds and installs to `~/bin/git-wt`.
 
+## Library Usage
+
+The `worktree` package can be imported into other Go projects to programmatically manage Git worktrees.
+
+### Installation
+
+```bash
+go get github.com/shogs/git-wt/worktree
+```
+
+### Example
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+
+    "github.com/shogs/git-wt/worktree"
+)
+
+func main() {
+    // Query functions - no stdout output
+    root, err := worktree.GetGitRoot()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Repository root: %s\n", root)
+
+    // List all worktrees
+    wts, err := worktree.GetWorktrees()
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, wt := range wts {
+        fmt.Printf("  %s -> %s\n", wt.Branch, wt.Path)
+    }
+
+    // Check worktree status
+    status, _ := worktree.GetWorktreeStatus(root)
+    fmt.Printf("Modified: %d, Staged: %d, Untracked: %d\n",
+        status.Modified, status.Staged, status.Untracked)
+
+    // Create a new worktree (silent - no CLI output)
+    err = worktree.CreateWorktree("feature-x", "main", ".worktrees/feature-x", true)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Remove a worktree
+    err = worktree.RemoveWorktree(".worktrees/feature-x", false)
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+### Available Functions
+
+**Query Functions** (read-only, no stdout):
+
+| Function | Description |
+|----------|-------------|
+| `GetGitRoot()` | Returns the repository root directory |
+| `GetCurrentBranch()` | Returns the current branch name |
+| `GetWorktrees()` | Returns a list of all worktrees |
+| `GetDefaultBranch()` | Returns the default branch (main/master) |
+| `GetWorktreeDir()` | Returns the `.worktrees` directory path |
+| `BranchExists(branch)` | Checks if a local branch exists |
+| `RemoteBranchExists(branch)` | Checks if a remote branch exists |
+| `HasUncommittedChanges(path)` | Checks for uncommitted changes |
+| `GetGitStatus(path)` | Returns git status output |
+| `GetWorktreeStatus(path)` | Returns modified/staged/untracked counts |
+| `GetAheadBehindCount(path, branch)` | Returns commits ahead/behind remote |
+| `GetUnpushedCommitCount(path, branch, baseBranch)` | Returns unpushed commit count |
+
+**Operations** (state-changing, silent):
+
+| Function | Description |
+|----------|-------------|
+| `CreateWorktree(branch, baseBranch, path, newBranch)` | Creates a new worktree |
+| `RemoveWorktree(path, force)` | Removes a worktree |
+| `DeleteBranch(branch, force)` | Deletes a local branch |
+| `EnsureWorktreeDir()` | Creates `.worktrees` directory and updates `.gitignore` |
+| `StashChanges(path)` | Stashes changes including untracked files |
+| `StashAll(path)` | Stages everything and stashes |
+| `MixedResetToBase(path, branch, baseBranch)` | Resets to base with changes unstaged |
+| `PushToRemote(path, branch)` | Pushes to remote tracking branch |
+| `PushToNewRemote(path, localBranch, remoteBranch)` | Pushes and sets upstream |
+
+**Types:**
+
+```go
+type WorktreeInfo struct {
+    Path     string
+    Branch   string
+    Head     string
+    Detached bool
+}
+
+type WorktreeStatus struct {
+    Modified  int
+    Untracked int
+    Staged    int
+}
+
+type AheadBehindCount struct {
+    Ahead  int
+    Behind int
+}
+```
+
 ## Comparison with Bash Version
 
 This Go port offers several advantages over the [original bash script](https://github.com/shogs/conffiles/blob/main/git-wt):

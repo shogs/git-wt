@@ -188,13 +188,27 @@ func deleteBranch(branch string, force bool) error {
 	return cmd.Run()
 }
 
-// getWorktreeDir returns the .worktrees directory path
+// getWorktreeDir returns the .worktrees directory path, always relative to the
+// main repo root (not the current worktree)
 func getWorktreeDir() (string, error) {
-	gitRoot, err := getGitRoot()
-	if err != nil {
+	// Use --git-common-dir to always resolve to the main repo root,
+	// even when called from inside a worktree
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
 		return "", err
 	}
-	return filepath.Join(gitRoot, ".worktrees"), nil
+	commonDir := strings.TrimSpace(out.String())
+	if !filepath.IsAbs(commonDir) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		commonDir = filepath.Join(cwd, commonDir)
+	}
+	repoRoot := filepath.Dir(commonDir)
+	return filepath.Join(repoRoot, ".worktrees"), nil
 }
 
 // ensureWorktreeDir creates the .worktrees directory if it doesn't exist

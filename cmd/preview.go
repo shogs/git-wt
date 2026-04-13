@@ -598,7 +598,7 @@ func watchAndMerge(previewWorktreePath, baseBranch string, branchEnabled map[str
 					readfds.Bits[fd/64] |= 1 << (uint(fd) % 64)
 					tv := syscall.Timeval{Sec: 0, Usec: 100000} // 100ms
 
-					err := syscall.Select(fd+1, &readfds, nil, nil, &tv)
+					err := sysSelect(fd+1, &readfds, nil, nil, &tv)
 					if err != nil {
 						continue // Timeout or error, loop back and check pause
 					}
